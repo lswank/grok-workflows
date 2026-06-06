@@ -11,7 +11,7 @@
     "./engine": "./src/engine.mjs"
   },
   "scripts": {
-    "test": "GROK_WORKFLOWS_MOCK=1 GROK_WORKFLOWS_QUIET=1 node --test 'test/*.test.mjs'",
+    "test": "GROK_WORKFLOWS_MOCK=1 GROK_WORKFLOWS_QUIET=1 node --test test/*.test.mjs",
     "list": "node src/cli.mjs list"
   },
   "engines": {
