@@ -12,6 +12,11 @@ import { dirname, join } from 'node:path'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const WORKFLOWS_DIR = join(__dirname, '..', 'workflows')
 
+// CLI keywords that the argument parser interprets specially. A workflow whose
+// name collides with one of these can't be reached via the bare shorthand
+// (`grok-workflows <name> …`); it's only reachable via `grok-workflows run <name> …`.
+const RESERVED_NAMES = new Set(['list', 'run', '-h', '--help'])
+
 async function loadWorkflows() {
   let files
   try {
@@ -24,6 +29,12 @@ async function loadWorkflows() {
     try {
       const mod = await import(join(WORKFLOWS_DIR, file))
       if (mod.meta?.name && typeof mod.run === 'function') {
+        if (RESERVED_NAMES.has(mod.meta.name)) {
+          process.stderr.write(
+            `(warning: workflow "${mod.meta.name}" (${file}) shadows a reserved CLI keyword; ` +
+              `run it via \`grok-workflows run ${mod.meta.name} "<input>"\`)\n`
+          )
+        }
         map.set(mod.meta.name, { ...mod, file })
       }
     } catch (err) {
@@ -44,8 +55,8 @@ async function main() {
     if (workflows.size === 0) {
       process.stdout.write('  (none found)\n')
     } else {
-      for (const [name, mod] of [...workflows].sort()) {
-        process.stdout.write(`  ${name.padEnd(20)} ${mod.meta.description}\n`)
+      for (const [name, mod] of [...workflows].sort((a, b) => a[0].localeCompare(b[0]))) {
+        process.stdout.write(`  ${name.padEnd(20)} ${mod.meta.description || '(no description)'}\n`)
       }
     }
     process.exit(0)

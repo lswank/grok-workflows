@@ -168,7 +168,14 @@ async function compareOnce(criterion, a, b, label) {
     log(`comparison failed (null); defaulting A>B for: ${label || 'cmp'}`)
     return { dir: -1, reason: '(comparison failed; kept prior order)', failed: true }
   }
-  const winner = res.winner === 'B' ? 'B' : 'A'
+  // _validateShape does NOT enforce enum values, so a model can return e.g. "C".
+  // Don't silently treat that as an A-win — mark it failed so callers know the
+  // comparison is untrustworthy (and counts of "real" comparisons stay honest).
+  if (res.winner !== 'A' && res.winner !== 'B') {
+    log(`comparison returned invalid winner ${JSON.stringify(res.winner)}; treating as failed for: ${label || 'cmp'}`)
+    return { dir: -1, reason: '(invalid winner; kept prior order)', failed: true }
+  }
+  const winner = res.winner
   return { dir: winner === 'A' ? -1 : 1, reason: String(res.reason ?? ''), failed: false }
 }
 

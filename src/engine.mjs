@@ -173,13 +173,16 @@ async function _runOneAgent(prompt, opts) {
   }
 
   const args = _buildArgs(finalPrompt, opts)
-  const { stdout, code, signal } = await _spawn(config.bin, args, {
+  const { stdout, stderr, code, signal } = await _spawn(config.bin, args, {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs ?? config.timeoutMs,
   })
   if (code !== 0) {
+    // grok reports real errors on stderr; fall back to stdout only if stderr is
+    // empty. Surfacing stderr makes a failed spawn actually debuggable.
+    const detail = (stderr && stderr.trim()) || (stdout && stdout.trim()) || '(no output)'
     throw new Error(
-      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${truncate(stdout, 200)}`
+      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${truncate(detail, 300)}`
     )
   }
   // --output-format json => a single JSON object: {text, stopReason, sessionId, requestId}
@@ -280,21 +283,35 @@ export function _extractJson(text) {
   try {
     return JSON.parse(body)
   } catch {
-    // Fall back to scanning for the first balanced { } or [ ] span.
-    const span = _firstBalancedSpan(body)
-    if (span === undefined) return undefined
-    try {
-      return JSON.parse(span)
-    } catch {
-      return undefined
+    // Fall back to scanning for balanced { } / [ ] spans, in order of where they
+    // appear in the text, and return the first one that actually parses. Ordering
+    // by position (not a fixed brace-before-bracket preference) means a valid
+    // value that appears earlier isn't shadowed by a later one, and a malformed
+    // leading span doesn't hide a valid one further along.
+    for (const span of _balancedSpans(body)) {
+      try {
+        return JSON.parse(span)
+      } catch {
+        /* try the next candidate span */
+      }
     }
+    return undefined
   }
 }
 
-function _firstBalancedSpan(s) {
+/** Yield balanced { } and [ ] spans, ordered by their opening position. */
+function* _balancedSpans(s) {
+  const openers = []
   for (const [open, close] of [['{', '}'], ['[', ']']]) {
-    const start = s.indexOf(open)
-    if (start === -1) continue
+    let from = 0
+    let idx
+    while ((idx = s.indexOf(open, from)) !== -1) {
+      openers.push({ open, close, start: idx })
+      from = idx + 1
+    }
+  }
+  openers.sort((a, b) => a.start - b.start)
+  for (const { open, close, start } of openers) {
     let depth = 0
     let inStr = false
     let esc = false
@@ -308,11 +325,13 @@ function _firstBalancedSpan(s) {
       else if (c === open) depth++
       else if (c === close) {
         depth--
-        if (depth === 0) return s.slice(start, i + 1)
+        if (depth === 0) {
+          yield s.slice(start, i + 1)
+          break
+        }
       }
     }
   }
-  return undefined
 }
 
 /** Minimal structural validation: required top-level keys exist. Throws on miss. */
@@ -529,19 +548,20 @@ export async function loopUntilDone(roundFn, opts = {}) {
   let dry = 0
   for (let round = 0; round < maxRounds; round++) {
     const out = await roundFn(round, acc)
+    // Accumulate this round's items FIRST — a round may hand back its final items
+    // alongside done:true, and those must not be dropped.
+    const items = Array.isArray(out) ? out : out?.items || []
+    if (items.length > 0) {
+      dry = 0
+      acc.push(...items)
+    }
     if (out && out.done) {
       log(`loopUntilDone: round ${round} signalled done`)
       break
     }
-    const items = Array.isArray(out) ? out : out?.items || []
-    if (items.length === 0) {
-      if (++dry >= dryLimit) {
-        log(`loopUntilDone: ${dry} dry rounds, stopping`)
-        break
-      }
-    } else {
-      dry = 0
-      acc.push(...items)
+    if (items.length === 0 && ++dry >= dryLimit) {
+      log(`loopUntilDone: ${dry} dry rounds, stopping`)
+      break
     }
   }
   return acc

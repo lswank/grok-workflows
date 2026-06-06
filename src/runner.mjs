@@ -3,16 +3,28 @@
 // while also being importable as a module (export const meta, export async run).
 
 import { pathToFileURL } from 'node:url'
+import { realpathSync } from 'node:fs'
 
 /** True when this module file is the process entrypoint. */
 export function isMain(importMetaUrl) {
   const invoked = process.argv[1]
   if (!invoked) return false
+  // Compare against both the raw and the symlink-resolved argv path. import.meta.url
+  // is canonicalized by Node, so on systems where the invocation path contains a
+  // symlink (e.g. macOS /tmp -> /private/tmp), the raw comparison would wrongly
+  // return false and the standalone CLI tail would never run.
+  const candidates = new Set()
   try {
-    return importMetaUrl === pathToFileURL(invoked).href
+    candidates.add(pathToFileURL(invoked).href)
   } catch {
-    return false
+    /* ignore */
   }
+  try {
+    candidates.add(pathToFileURL(realpathSync(invoked)).href)
+  } catch {
+    /* invoked path may not exist on disk; the raw comparison still applies */
+  }
+  return candidates.has(importMetaUrl)
 }
 
 /**

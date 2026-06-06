@@ -61,6 +61,10 @@ const FIX_SCHEMA = {
     path: { type: 'string' },
     summary: { type: 'string' },
     done: { type: 'boolean' },
+    // The literal `git diff` of the change. Carried out of the isolated worktree
+    // so the read-only reviewer (which runs OUTSIDE that worktree) can inspect
+    // the actual change instead of trusting the prose summary.
+    diff: { type: 'string' },
   },
 }
 
@@ -141,6 +145,8 @@ export async function run(input, ctx = {}) {
       sites: 0,
       fixed: [],
       needsAttention: [],
+      dropped: 0,
+      merged: false,
       note: 'No sites found needing this migration (or discovery failed).',
     }
   }
@@ -180,6 +186,10 @@ export async function run(input, ctx = {}) {
           '',
           'Report what you changed. Set done=true only if the migration is fully',
           'applied at this site; false if you were blocked or it is partial.',
+          'Then run `git diff` in your worktree and put its COMPLETE output in the',
+          '"diff" field — a separate reviewer who cannot see your worktree will rely',
+          'on that diff (not your summary) to verify the change. If the diff is',
+          'empty, you made no change: set done=false.',
         ].join('\n'),
         {
           label: `fix:${site.path}`,
@@ -195,7 +205,7 @@ export async function run(input, ctx = {}) {
       const fix =
         result && typeof result === 'object'
           ? result
-          : { path: site.path, summary: 'fix agent failed or returned no object', done: false }
+          : { path: site.path, summary: 'fix agent failed or returned no object', done: false, diff: '' }
       return { site, fix }
     },
 
@@ -216,6 +226,10 @@ export async function run(input, ctx = {}) {
         }
       }
 
+      const diffText =
+        typeof fix.diff === 'string' && fix.diff.trim()
+          ? fix.diff.trim()
+          : '(the fix agent did not report a diff)'
       const review = await agent(
         [
           'You are an adversarial code reviewer. Be skeptical. Your job is to find',
@@ -226,9 +240,18 @@ export async function run(input, ctx = {}) {
           `Site: ${site.path}`,
           `Engineer's summary of the change: ${fix.summary}`,
           '',
-          'Inspect the change at this site. Verify it actually accomplishes the',
-          'migration, is complete (no missed references at this site), and does not',
-          'introduce breakage or leftover old patterns.',
+          'The change was made in a separate worktree you cannot access, so review',
+          'it from the diff below — judge the ACTUAL diff, not the summary. If the',
+          'diff is empty or absent, the migration was not applied: do not approve.',
+          '',
+          'Diff of the change:',
+          '```diff',
+          diffText,
+          '```',
+          '',
+          'Verify the diff actually accomplishes the migration, is complete (no',
+          'missed references at this site), and introduces no breakage or leftover',
+          'old patterns.',
           '',
           'Approve ONLY if the change is correct and complete. List every concrete',
           'issue you find; an empty issues list with approved=true means it is clean.',

@@ -288,12 +288,21 @@ export async function run(input, ctx = {}) {
   const dropped = results.length - clean.length
   if (dropped > 0) log(`note: ${dropped} claim chain(s) dropped to null (pipeline failure)`)
 
+  // Lower = more suspect = sorted first within a verdict group. A claim that was
+  // downgraded by the audit (audited && now 'unverifiable') is the most suspect of
+  // all, so it must float above claims that were unverifiable from the start —
+  // matching the documented intent ("downgraded-by-audit claims float above clean ones").
+  const suspicion = (c) => {
+    if (c.audited && c.verdict === 'unverifiable') return -1 // downgraded by audit
+    if (c.auditQuality === 'low') return 0
+    if (c.auditQuality === 'medium') return 1
+    return c.audited ? 2 : 0 // confirmed high-quality last; unaudited treated as suspect
+  }
   clean.sort((a, b) => {
     const r = (VERDICT_RANK[a.verdict] ?? 3) - (VERDICT_RANK[b.verdict] ?? 3)
     if (r !== 0) return r
-    // Within supported: unaudited/lower-quality first (more suspect).
-    const qa = a.auditQuality === 'low' ? 0 : a.auditQuality === 'medium' ? 1 : a.audited ? 2 : 0
-    const qb = b.auditQuality === 'low' ? 0 : b.auditQuality === 'medium' ? 1 : b.audited ? 2 : 0
+    const qa = suspicion(a)
+    const qb = suspicion(b)
     if (qa !== qb) return qa - qb
     return String(a.id).localeCompare(String(b.id))
   })

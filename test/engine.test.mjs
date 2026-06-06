@@ -211,9 +211,30 @@ test('loopUntilDone() stops on done:true', async () => {
   assert.deepEqual(acc, ['x'])
 })
 
+test('loopUntilDone() accumulates items returned alongside done:true', async () => {
+  // A round may signal completion AND hand back its final items in one return.
+  // Those items must not be dropped.
+  const acc = await loopUntilDone(
+    async (r) => (r === 0 ? { items: ['a'] } : { items: ['b'], done: true }),
+    { maxRounds: 10 }
+  )
+  assert.deepEqual(acc, ['a', 'b'])
+})
+
 test('_extractJson handles bare, fenced, and embedded JSON', () => {
   assert.deepEqual(_extractJson('{"a":1}'), { a: 1 })
   assert.deepEqual(_extractJson('```json\n{"a":1}\n```'), { a: 1 })
   assert.deepEqual(_extractJson('here you go: {"a":[1,2]} done'), { a: [1, 2] })
   assert.equal(_extractJson('no json here'), undefined)
+})
+
+test('_extractJson returns the value that appears first in the text', () => {
+  // An array preceding an object must not be shadowed by a brace-first preference.
+  assert.deepEqual(_extractJson('[1,2,3] {"x":1}'), [1, 2, 3])
+  assert.deepEqual(_extractJson('{"x":1} [1,2,3]'), { x: 1 })
+})
+
+test('_extractJson skips a malformed leading span for a later valid one', () => {
+  // A balanced-but-invalid object first, a valid array second.
+  assert.deepEqual(_extractJson('prefix {not json} suffix [1,2]'), [1, 2])
 })
