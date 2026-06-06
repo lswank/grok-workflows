@@ -15,6 +15,7 @@ import {
   generateAndFilter,
   loopUntilDone,
   _extractJson,
+  _validateDeep,
   config,
 } from '../src/engine.mjs'
 
@@ -269,6 +270,113 @@ test('loopUntilDone() still treats an empty array / {items:[]} as a dry round', 
     { dryStreak: 2, maxRounds: 10 }
   )
   assert.equal(objRounds, 2)
+})
+
+// --- deep schema validation (_validateDeep, opt-in strict mode) -------------
+
+test('_validateDeep accepts a well-typed nested object', () => {
+  const schema = {
+    type: 'object',
+    required: ['name', 'tags'],
+    properties: {
+      name: { type: 'string' },
+      tags: { type: 'array', items: { type: 'string' } },
+      meta: {
+        type: 'object',
+        required: ['count'],
+        properties: { count: { type: 'integer' } },
+      },
+    },
+  }
+  // Should not throw.
+  _validateDeep({ name: 'x', tags: ['a', 'b'], meta: { count: 3 }, extra: 1 }, schema)
+})
+
+test('_validateDeep rejects a wrong primitive type with a JSON path', () => {
+  const schema = { type: 'object', required: ['n'], properties: { n: { type: 'number' } } }
+  assert.throws(() => _validateDeep({ n: 'not a number' }, schema), /\$\.n/)
+})
+
+test('_validateDeep enforces enum membership', () => {
+  const schema = {
+    type: 'object',
+    required: ['winner'],
+    properties: { winner: { enum: ['A', 'B'] } },
+  }
+  _validateDeep({ winner: 'A' }, schema) // ok
+  assert.throws(() => _validateDeep({ winner: 'C' }, schema), /enum/)
+})
+
+test('_validateDeep validates each array item against items schema', () => {
+  const schema = {
+    type: 'object',
+    required: ['rows'],
+    properties: {
+      rows: {
+        type: 'array',
+        items: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      },
+    },
+  }
+  _validateDeep({ rows: [{ id: 'a' }, { id: 'b' }] }, schema) // ok
+  // second item has a numeric id → should point at rows[1].id
+  assert.throws(() => _validateDeep({ rows: [{ id: 'a' }, { id: 7 }] }, schema), /rows\[1\]\.id/)
+})
+
+test('_validateDeep enforces nested required keys', () => {
+  const schema = {
+    type: 'object',
+    required: ['meta'],
+    properties: {
+      meta: { type: 'object', required: ['count'], properties: { count: { type: 'number' } } },
+    },
+  }
+  assert.throws(() => _validateDeep({ meta: {} }, schema), /missing required keys: count/)
+})
+
+test('_validateDeep supports union types like ["string","null"]', () => {
+  const schema = {
+    type: 'object',
+    required: ['ref'],
+    properties: { ref: { type: ['string', 'null'] } },
+  }
+  _validateDeep({ ref: null }, schema) // ok
+  _validateDeep({ ref: 'x' }, schema) // ok
+  assert.throws(() => _validateDeep({ ref: 5 }, schema), /ref/)
+})
+
+test('agent({strictSchema}) retries to null when a nested type is wrong', async () => {
+  await withMock(
+    async () => JSON.stringify({ winner: 'C', reason: 'r' }), // 'C' violates enum
+    async () => {
+      const schema = {
+        type: 'object',
+        required: ['winner', 'reason'],
+        properties: { winner: { enum: ['A', 'B'] }, reason: { type: 'string' } },
+      }
+      // Lenient (default): passes through despite the bad enum value.
+      const lenient = await agent('x', { schema, retries: 0 })
+      assert.deepEqual(lenient, { winner: 'C', reason: 'r' })
+      // Strict: the bad enum is rejected, retried, and ultimately null.
+      const strict = await agent('x', { schema, strictSchema: true, retries: 1 })
+      assert.equal(strict, null)
+    }
+  )
+})
+
+test('agent({strictSchema}) returns the object when it conforms', async () => {
+  await withMock(
+    async () => JSON.stringify({ winner: 'A', reason: 'r' }),
+    async () => {
+      const schema = {
+        type: 'object',
+        required: ['winner', 'reason'],
+        properties: { winner: { enum: ['A', 'B'] }, reason: { type: 'string' } },
+      }
+      const out = await agent('x', { schema, strictSchema: true })
+      assert.deepEqual(out, { winner: 'A', reason: 'r' })
+    }
+  )
 })
 
 test('_extractJson handles bare, fenced, and embedded JSON', () => {

@@ -160,7 +160,9 @@ const verdicts = await parallel(claims.map((c) => () => adversarialVerify(c.text
 `agent()` options include `model`, `effort`, `schema`, `isolation:'worktree'`,
 `tools` / `disallowedTools` (e.g. `['Agent']` to block sub-spawning,
 `['run_terminal_cmd']` to quarantine untrusted-content agents), `maxTurns`,
-`rules`, `allow` / `deny`, `disableWebSearch`, and more. See
+`rules`, `allow` / `deny`, `disableWebSearch`, `strictSchema` (enforce the full
+schema — nested types, enums, array items — instead of just top-level keys), and
+more. See
 [`src/SPEC.md`](./src/SPEC.md) for the full authoring contract, and
 [`src/engine.mjs`](./src/engine.mjs) for the JSDoc on every function.
 

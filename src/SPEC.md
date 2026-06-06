@@ -41,7 +41,21 @@ Key `opts`: `model`, `effort` (low|medium|high|xhigh|max), `schema`, `label`,
 `isolation:'worktree'` (file-mutating agents that must not collide), `tools`
 (allowlist), `disallowedTools` (e.g. `['Agent']` to block sub-spawning,
 `['run_terminal_cmd']` to block shell), `maxTurns`, `rules` (guardrail string),
-`cwd`, `noProjectRoot`, `sessionId`, `allow`, `deny`, `disableWebSearch`.
+`cwd`, `noProjectRoot`, `sessionId`, `allow`, `deny`, `disableWebSearch`,
+`strictSchema`.
+
+**Schema validation is lightweight by default.** With `schema` set, the engine
+only checks that the value is the right top-level kind and that top-level
+`required` keys exist — it does NOT enforce nested types, `enum` values, or array
+`items`. So a present-but-wrong field (a string where a number was declared, a
+winner outside an enum, a missing nested key) passes through, and your workflow
+must defend against it (coerce/guard). To make the engine enforce the full
+schema instead, pass `strictSchema: true` per call (or set `config.strictSchema`
+/ `GROK_WORKFLOWS_STRICT_SCHEMA=1` globally): a deep validator then checks nested
+`type` (incl. unions like `["string","null"]` and `integer`), `enum` membership,
+nested `required`, and `items`, and a mismatch is retried like any other
+parse failure (ultimately `null`). Use it when a malformed field is better
+retried than silently coerced; keep the lenient default when you'd rather coerce.
 
 ### `parallel(thunks) → Promise<(T|null)[]>`
 **Barrier.** Runs all thunks concurrently (capped at `config.concurrency`),

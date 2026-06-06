@@ -41,6 +41,11 @@ export const config = {
   // Hard ceiling on total agent() invocations per process — a runaway-loop
   // backstop, set far above any real workflow.
   maxTotalAgents: Number(process.env.GROK_WORKFLOWS_MAX_AGENTS) || 1000,
+  // When true, schema'd agents are validated with the deep validator (nested
+  // types, enums, array items) instead of the lightweight top-level check. Can
+  // also be set per-call via opts.strictSchema. Off by default to preserve the
+  // lenient instruct-parse-retry contract.
+  strictSchema: process.env.GROK_WORKFLOWS_STRICT_SCHEMA === '1',
 }
 
 let _totalAgents = 0
@@ -107,6 +112,10 @@ export function log(message) {
  *                                         instructed to emit ONLY matching JSON,
  *                                         and the parsed+validated object is
  *                                         returned instead of the raw text.
+ * @param {boolean} [opts.strictSchema]    Validate with the deep validator
+ *                                         (nested types, enums, array items)
+ *                                         rather than the lightweight top-level
+ *                                         check. Defaults to config.strictSchema.
  * @param {string} [opts.label]            Display label for logs.
  * @param {'worktree'} [opts.isolation]    Run in a fresh git worktree.
  * @param {string[]} [opts.tools]          Allowlist of built-in tools.
@@ -146,8 +155,11 @@ async function _runAgentWithRetries(prompt, opts, label) {
       if (opts.schema) {
         const parsed = _extractJson(text)
         if (parsed === undefined) throw new Error('no JSON object found in output')
-        // (Validation is intentionally lightweight — see _validateShape.)
-        _validateShape(parsed, opts.schema)
+        // Default validation is intentionally lightweight (top-level keys only).
+        // Opt into full nested/type/enum enforcement per-call (opts.strictSchema)
+        // or globally (config.strictSchema). A violation throws → retries → null.
+        if (opts.strictSchema ?? config.strictSchema) _validateDeep(parsed, opts.schema)
+        else _validateShape(parsed, opts.schema)
         log(`done   ${tag}`)
         return parsed
       }
@@ -334,7 +346,10 @@ function* _balancedSpans(s) {
   }
 }
 
-/** Minimal structural validation: required top-level keys exist. Throws on miss. */
+/** Minimal structural validation: required top-level keys exist. Throws on miss.
+ * This is the DEFAULT, intentionally-lenient check (instruct, parse, retry). For
+ * full nested/type/enum enforcement, opt into _validateDeep via opts.strictSchema
+ * or config.strictSchema. */
 function _validateShape(value, schema) {
   if (!schema || typeof schema !== 'object') return
   if (schema.type === 'object' && Array.isArray(schema.required)) {
@@ -346,6 +361,96 @@ function _validateShape(value, schema) {
   }
   if (schema.type === 'array' && !Array.isArray(value)) {
     throw new Error(`expected array, got ${typeof value}`)
+  }
+}
+
+/** The JSON-ish type name of a value, distinguishing array and null from object. */
+function _jsonType(value) {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  return typeof value
+}
+
+/** True if `value` matches a single JSON Schema primitive `type`. Unknown type
+ * strings are treated permissively (return true) so an exotic schema can't make
+ * validation reject everything. */
+function _matchesType(value, t) {
+  switch (t) {
+    case 'string':
+      return typeof value === 'string'
+    case 'number':
+      return typeof value === 'number'
+    case 'integer':
+      return typeof value === 'number' && Number.isInteger(value)
+    case 'boolean':
+      return typeof value === 'boolean'
+    case 'object':
+      return value != null && typeof value === 'object' && !Array.isArray(value)
+    case 'array':
+      return Array.isArray(value)
+    case 'null':
+      return value === null
+    default:
+      return true
+  }
+}
+
+/**
+ * Deep, opt-in JSON Schema validation. Unlike _validateShape (top-level keys
+ * only), this recursively enforces declared `type` (including unions like
+ * `["string","null"]` and `integer`), `enum` membership, nested object `required`
+ * keys, and `array` `items` schemas. Throws with a JSON-path-style location on the
+ * first violation. It is deliberately a SUBSET of full JSON Schema — no
+ * additionalProperties, no formats, no min/max — so it stays cheap and never
+ * rejects the kind of harmless extra fields LLMs add. Absent optional properties
+ * are fine; only `required` keys must be present.
+ *
+ * @param {*} value
+ * @param {object} schema
+ * @param {string} [path='$']  JSON path of `value`, used in error messages.
+ */
+export function _validateDeep(value, schema, path = '$') {
+  if (!schema || typeof schema !== 'object') return
+
+  // enum membership (checked before type — an enum implies the allowed set).
+  if (Array.isArray(schema.enum)) {
+    if (!schema.enum.some((e) => e === value)) {
+      throw new Error(
+        `${path}: ${JSON.stringify(value)} not in enum [${schema.enum.map((e) => JSON.stringify(e)).join(', ')}]`
+      )
+    }
+  }
+
+  // type (a string, or an array of acceptable types).
+  if (schema.type !== undefined) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+    if (!types.some((t) => _matchesType(value, t))) {
+      throw new Error(`${path}: expected type ${types.join('|')}, got ${_jsonType(value)}`)
+    }
+  }
+
+  const isObj = value != null && typeof value === 'object' && !Array.isArray(value)
+
+  // object: required keys + recurse into declared properties that are present.
+  if (isObj) {
+    if (Array.isArray(schema.required)) {
+      const missing = schema.required.filter((k) => !(k in value))
+      if (missing.length) throw new Error(`${path}: missing required keys: ${missing.join(', ')}`)
+    }
+    if (schema.properties && typeof schema.properties === 'object') {
+      for (const [k, sub] of Object.entries(schema.properties)) {
+        if (k in value && value[k] !== undefined) {
+          _validateDeep(value[k], sub, `${path}.${k}`)
+        }
+      }
+    }
+  }
+
+  // array: recurse each element against the items schema.
+  if (Array.isArray(value) && schema.items && typeof schema.items === 'object') {
+    for (let i = 0; i < value.length; i++) {
+      _validateDeep(value[i], schema.items, `${path}[${i}]`)
+    }
   }
 }
 
