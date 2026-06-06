@@ -73,7 +73,9 @@ async function loadCorpus(input, ctx) {
   }
   const corpus = parts.join('\n\n')
   if (!corpus.trim()) throw new Error(`no readable content found at "${input}"`)
-  return { corpus, fileCount: files.length }
+  // Report files actually INGESTED, not merely discovered: an unreadable file is
+  // skipped above, so files.length would overstate coverage in the log and stats.
+  return { corpus, fileCount: parts.length }
 }
 
 function sliceCorpus(corpus, size = SLICE_CHARS) {

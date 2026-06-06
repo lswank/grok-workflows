@@ -44,7 +44,11 @@ export async function cli(meta, run) {
   }
   try {
     const result = await run(input, { cwd: process.cwd() })
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+    // A run() that resolves to undefined (e.g. a missing return) would make
+    // JSON.stringify yield the JS value undefined, printing the bare token
+    // "undefined" — invalid JSON that breaks any downstream JSON.parse. Coerce to
+    // null so stdout always stays valid JSON.
+    process.stdout.write(JSON.stringify(result ?? null, null, 2) + '\n')
     process.exit(0)
   } catch (err) {
     process.stderr.write(`\x1b[31m${meta.name} failed:\x1b[0m ${err?.stack || err}\n`)

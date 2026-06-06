@@ -550,16 +550,28 @@ export async function loopUntilDone(roundFn, opts = {}) {
     const out = await roundFn(round, acc)
     // Accumulate this round's items FIRST — a round may hand back its final items
     // alongside done:true, and those must not be dropped.
-    const items = Array.isArray(out) ? out : out?.items || []
-    if (items.length > 0) {
-      dry = 0
-      acc.push(...items)
-    }
+    const isArr = Array.isArray(out)
+    const items = isArr ? out : out?.items || []
+    if (items.length > 0) acc.push(...items)
+    // "New work" resets the dry streak. Per the documented contract this is broader
+    // than "items were returned": a bare truthy value (string/number/true) or an
+    // object carrying its own signal (e.g. {found:5}) also counts as progress, even
+    // though it contributes no items to the accumulator. An empty array, {items:[]},
+    // a falsy value, or a {done}/{items}-shaped object with nothing new does NOT.
+    const isObjectForm = out != null && typeof out === 'object' && !isArr
+    const bareTruthy = Boolean(out) && !isArr && !isObjectForm
+    const objSignalsWork =
+      isObjectForm &&
+      out.items === undefined &&
+      out.done === undefined &&
+      Object.keys(out).length > 0
+    const signalsWork = items.length > 0 || bareTruthy || objSignalsWork
+    if (signalsWork) dry = 0
     if (out && out.done) {
       log(`loopUntilDone: round ${round} signalled done`)
       break
     }
-    if (items.length === 0 && ++dry >= dryLimit) {
+    if (!signalsWork && ++dry >= dryLimit) {
       log(`loopUntilDone: ${dry} dry rounds, stopping`)
       break
     }

@@ -130,11 +130,17 @@ export async function run(input, ctx = {}) {
   )
 
   // With a schema we expect an object; tolerate a null (failed agent) or a
-  // stray string (mock without schema awareness) without crashing.
+  // stray string (mock without schema awareness) without crashing. _validateShape
+  // only checks top-level keys, NOT nested item fields — so a site may arrive
+  // missing `why`. Normalize it to a fallback here so neither the fix prompt nor
+  // the report ever interpolates the literal string "undefined".
   const sites = Array.isArray(discovery?.sites)
-    ? discovery.sites.filter(
-        (s) => s && typeof s === 'object' && typeof s.path === 'string'
-      )
+    ? discovery.sites
+        .filter((s) => s && typeof s === 'object' && typeof s.path === 'string')
+        .map((s) => ({
+          path: s.path,
+          why: typeof s.why === 'string' && s.why.trim() ? s.why.trim() : '(no reason given)',
+        }))
     : []
 
   if (sites.length === 0) {
@@ -212,8 +218,10 @@ export async function run(input, ctx = {}) {
     // Stage 3 — adversarial review of the fix (read-only, fresh context).
     async ({ site, fix }) => {
       // Don't bother reviewing a fix the engineer reported as not done — surface
-      // it directly as needing attention.
-      if (!fix.done) {
+      // it directly as needing attention. Use a STRICT boolean check: _validateShape
+      // never type-checks `done`, so a model emitting the string "false" would slip
+      // past a truthy `!fix.done` test and be wrongly treated as completed.
+      if (fix.done !== true) {
         log(`migrate: ${site.path} not completed by fix agent — flagging`)
         return {
           site,

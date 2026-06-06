@@ -102,9 +102,14 @@ async function produceCandidate(task, rubric, n, i) {
     label: `produce#${candidateNo}`,
   })
   if (!res) return null
-  // Normalize: schema returns an object, but be defensive.
+  // Normalize: schema returns an object, but be defensive. The `candidate` number
+  // is the cross-stage JOIN KEY for scoring + tournament results, so it must be the
+  // trusted internal id (candidateNo) — NOT res.candidate. Producers run in fully
+  // isolated contexts with no knowledge of each other; two of them can emit the
+  // same number (or a wrong one), which would collapse distinct candidates onto one
+  // map entry and misattribute every score/tournament result. Ignore res.candidate.
   return {
-    candidate: Number(res.candidate) || candidateNo,
+    candidate: candidateNo,
     approach: String(res.approach ?? '').trim() || `approach ${candidateNo}`,
     summary: String(res.summary ?? '').trim(),
   }
@@ -143,7 +148,9 @@ async function scoreCandidate(task, rubric, cand) {
   if (!Number.isFinite(score)) score = 0
   score = Math.max(0, Math.min(100, score))
   return {
-    candidate: Number(res.candidate) || cand.candidate,
+    // Key off the candidate we were asked to score, not the number the grader
+    // echoed back — the latter is untrusted and may not match.
+    candidate: cand.candidate,
     score,
     justification: String(res.justification ?? '').trim(),
   }

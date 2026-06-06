@@ -75,7 +75,9 @@ async function main() {
   }
   try {
     const result = await mod.run(input, { cwd: process.cwd() })
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+    // Coerce an undefined result to null so stdout stays valid JSON (a bare
+    // JSON.stringify(undefined) would print the unparseable token "undefined").
+    process.stdout.write(JSON.stringify(result ?? null, null, 2) + '\n')
   } catch (err) {
     process.stderr.write(`${name} failed: ${err?.stack || err}\n`)
     process.exit(1)

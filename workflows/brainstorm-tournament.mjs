@@ -191,10 +191,11 @@ export async function run(input, ctx = {}) {
   }
 
   // Each match carries its own "why" out via a closure-shared map keyed by the
-  // winning candidate name, so the final top-3 can report the deciding reason.
-  const whyByName = new Map()
-
-  const makeComparator = () => async (a, b) => {
+  // winning candidate name, so the final top-3 can report the deciding reason. The
+  // map is created FRESH per rank (see the loop below) — sharing one map across all
+  // three ranks would let a stale "why" from a candidate's earlier-rank match shadow
+  // the reason it actually won a later rank by.
+  const makeComparator = (whyByName) => async (a, b) => {
     const an = candText(a)
     const bn = candText(b)
     const res = await agent(
@@ -219,7 +220,8 @@ export async function run(input, ctx = {}) {
   let remaining = candidates.slice()
   for (let rank = 1; rank <= 3 && remaining.length > 0; rank++) {
     log(`brainstorm: tournament round for rank #${rank} over ${remaining.length} candidate(s)`)
-    const { winner } = await tournament(remaining, makeComparator())
+    const whyByName = new Map() // fresh per rank — no stale carry-over from prior ranks
+    const { winner } = await tournament(remaining, makeComparator(whyByName))
     const winName = candText(winner)
     if (!winName) break
     top3.push({

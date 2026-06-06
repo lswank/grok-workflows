@@ -221,6 +221,56 @@ test('loopUntilDone() accumulates items returned alongside done:true', async () 
   assert.deepEqual(acc, ['a', 'b'])
 })
 
+test('loopUntilDone() treats a bare truthy return as new work (resets dry streak)', async () => {
+  // The JSDoc promises "truthy 'new work' resets the dry streak". A roundFn that
+  // signals progress by returning a bare truthy value (not the {items}/array form)
+  // must NOT be mistaken for a dry round.
+  let round = 0
+  const acc = await loopUntilDone(
+    async () => {
+      round++
+      return 'found something'
+    },
+    { dryStreak: 2, maxRounds: 4 }
+  )
+  assert.equal(round, 4) // never dry => runs to maxRounds, not stopped at dryStreak
+  assert.deepEqual(acc, []) // a bare value contributes no items, only resets the streak
+})
+
+test('loopUntilDone() treats {found:n} (extra-keyed object) as new work', async () => {
+  let round = 0
+  await loopUntilDone(
+    async () => {
+      round++
+      return { found: 3 }
+    },
+    { dryStreak: 2, maxRounds: 4 }
+  )
+  assert.equal(round, 4)
+})
+
+test('loopUntilDone() still treats an empty array / {items:[]} as a dry round', async () => {
+  let arrRounds = 0
+  await loopUntilDone(
+    async () => {
+      arrRounds++
+      return []
+    },
+    { dryStreak: 2, maxRounds: 10 }
+  )
+  assert.equal(arrRounds, 2) // empty array is "no new items" => dry streak still fires
+
+  let objRounds = 0
+  await loopUntilDone(
+    async () => {
+      objRounds++
+      return { items: [] }
+    },
+    { dryStreak: 2, maxRounds: 10 }
+  )
+  assert.equal(objRounds, 2)
+})
+
 test('_extractJson handles bare, fenced, and embedded JSON', () => {
   assert.deepEqual(_extractJson('{"a":1}'), { a: 1 })
   assert.deepEqual(_extractJson('```json\n{"a":1}\n```'), { a: 1 })
