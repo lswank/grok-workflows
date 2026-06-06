@@ -1,0 +1,38 @@
+{
+  "name": "grok-workflows",
+  "version": "0.1.0",
+  "description": "A dynamic-workflow engine for Grok Code (the grok CLI) — fan-out, pipelines, tournaments, adversarial verification, and loop-until-done harnesses built on Grok headless agents.",
+  "type": "module",
+  "bin": {
+    "grok-workflows": "./src/cli.mjs"
+  },
+  "exports": {
+    ".": "./src/engine.mjs",
+    "./engine": "./src/engine.mjs"
+  },
+  "scripts": {
+    "test": "GROK_WORKFLOWS_MOCK=1 GROK_WORKFLOWS_QUIET=1 node --test 'test/*.test.mjs'",
+    "list": "node src/cli.mjs list"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "src/",
+    "workflows/",
+    "skills/",
+    "README.md"
+  ],
+  "keywords": [
+    "grok",
+    "grok-code",
+    "xai",
+    "workflows",
+    "agents",
+    "orchestration",
+    "harness",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "author": "lswank"
+}

@@ -1,0 +1,75 @@
+---
+name: deep-verify
+description: Extracts every factual/technical claim from a document and verifies each one in detail — a fresh investigator per claim gathers concrete evidence (files, grep, web), then an adversarial auditor tries to debunk every "supported" finding. Use when the user wants a document, README, spec, PR description, or report fact-checked claim-by-claim, asks you to "verify the claims in X", "fact-check this doc", wants each assertion checked against the codebase/web, or asks for /deep-verify.
+metadata:
+  short-description: "Claim-by-claim document verification with adversarial source auditing"
+---
+
+# /deep-verify — claim-by-claim verification with adversarial auditing
+
+Runs the bundled grok-workflows harness, which extracts every discrete verifiable
+claim from a document, spawns a fresh skeptical investigator per claim (each its
+own context window — no agentic laziness, no stopping at 35/50), and then runs an
+independent adversarial auditor against every "supported" finding to catch
+hallucinated files, misquotes, and stale evidence. You do not re-implement any of
+this — you invoke the harness and act on its JSON.
+
+## Usage
+`/deep-verify <path-to-doc-or-raw-text>`
+
+The argument is either a file path (read as the document) or the raw document
+text itself.
+
+## How it runs
+
+Execute the bundled harness with `run_terminal_cmd` (replace `<repo>` with this
+repository's absolute path, and pass the user's input, quoted):
+
+```bash
+node <repo>/workflows/deep-verify.mjs "<path-to-doc-or-text>"
+```
+
+The harness prints a single JSON object to stdout (progress logs go to stderr):
+
+```json
+{
+  "total": 12,
+  "supported": 7,
+  "contradicted": 2,
+  "unverifiable": 3,
+  "claims": [
+    {
+      "id": "c1",
+      "text": "...the claim, self-contained...",
+      "verdict": "supported | contradicted | unverifiable",
+      "evidence": "quoted file:line or specific fact/URL",
+      "source": "where the evidence came from",
+      "audited": true,
+      "auditQuality": "high | medium | low",
+      "auditNote": "what the adversarial auditor found"
+    }
+  ]
+}
+```
+
+`claims` is sorted problems-first: `contradicted`, then `unverifiable`
+(including support that was downgraded by the audit), then clean `supported`.
+
+## What to do with the result
+
+1. Parse the JSON from stdout.
+2. Lead with the headline counts: `total`, `supported`, `contradicted`,
+   `unverifiable` — so the user immediately knows the document's reliability.
+3. Walk the `contradicted` claims first (these are factual errors in the
+   document), then `unverifiable` ones — quote each claim's `text`, `evidence`,
+   and `source`. Flag any claim whose `auditNote` says support was downgraded;
+   that is a finding a single agent would have missed.
+4. Briefly confirm the `supported` claims (especially `auditQuality: "high"`
+   ones) rather than re-listing them all.
+5. If the user asked for a file or report, write a markdown summary grouping
+   claims by verdict, with evidence and sources inline.
+6. If `total` is 0, tell the user no verifiable claims were extracted (the input
+   may be too vague or empty) and suggest a more concrete document.
+
+Do not drop the `evidence`/`source`/`auditNote` fields — the point of this skill
+is showing the user *why* each claim holds or fails, not just a verdict.
