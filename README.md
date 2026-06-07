@@ -107,13 +107,27 @@ grok plugin install . --trust
 grok inspect            # confirm the skills are discovered
 ```
 
-Then, inside Grok — from anywhere:
+Then, inside Grok — from anywhere. Either name a harness directly:
 
 ```
 /deep-research Did Postgres add MERGE in v15 or v16?
 /triage ./incidents.txt
 /root-cause why did checkout conversion drop 12% last week
 ```
+
+…or use the umbrella **`/workflow`** entry (also triggered by saying `ultracode`)
+and let it route your task to the right harness:
+
+```
+/workflow rank these incidents by severity: login broken | footer typo | data loss
+ultracode research whether Postgres added MERGE in v15 or v16
+```
+
+`/workflow` picks the best-fit harness and hands off to it. Whichever way you
+enter, the chosen harness spawns real headless `grok -p` subprocesses on your
+account (one per parallel unit of work) — that's the engine doing its fan-out.
+Prefix any invocation's environment with `GROK_WORKFLOWS_MOCK=1` for a free,
+deterministic dry run.
 
 **How invocation works (no path anywhere):** each skill bundles a tiny
 self-locating launcher at `skills/<name>/scripts/run.mjs`. Grok announces the
