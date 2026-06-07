@@ -211,17 +211,21 @@ export async function run(input, ctx = {}) {
   // resolved token after the last " -- " must exist on disk). This prevents
   // mangling natural-language problem statements containing " -- " + dash-like
   // prose. See src/parse-input.mjs for the full history of the prior
-  // inconsistency (bug #2) and the unified implementation.
+  // inconsistency (bug #2) and the unified implementation (now augmented with
+  // dropped observability in Task 4).
   const sepParse = await parseWithSeparator(input, { cwd, log })
   let problem = input
   let evidenceFiles = []
+  let droppedEvidenceFiles = []
   if (sepParse.accepted) {
     problem = sepParse.left
     evidenceFiles = Array.isArray(sepParse.right) ? sepParse.right : []
+    droppedEvidenceFiles = Array.isArray(sepParse.dropped) ? sepParse.dropped : []
   } else if (sepParse.hadMatch) {
     log('note: -- present in input but no valid evidence files followed it; treating entire string as the problem description')
     problem = input
     evidenceFiles = []
+    droppedEvidenceFiles = Array.isArray(sepParse.dropped) ? sepParse.dropped : []
   }
   problem = problem.trim()
   if (!problem) throw new Error('no problem description provided')
@@ -229,6 +233,9 @@ export async function run(input, ctx = {}) {
     `root-cause: problem="${problem.slice(0, 80)}"` +
       (evidenceFiles.length ? ` with ${evidenceFiles.length} evidence file(s)` : ' (no evidence files)')
   )
+  if (droppedEvidenceFiles.length > 0) {
+    log(`root-cause: dropped ${droppedEvidenceFiles.length} evidence file(s) after -- that did not exist: ${droppedEvidenceFiles.join(', ')}`)
+  }
 
   const runCtx = { cwd }
   let rounds = 0
@@ -302,6 +309,11 @@ export async function run(input, ctx = {}) {
     rejected,
     rounds,
     generatorFailures,
+    // evidenceFiles + droppedEvidenceFiles now always included (Task 4) so callers/CLI/JSON
+    // users observe exactly which after- --  files were accepted vs dropped (previously silent
+    // except for easy-to-miss stderr logs). Backward compat for other fields preserved.
+    evidenceFiles,
+    droppedEvidenceFiles,
   }
 }
 

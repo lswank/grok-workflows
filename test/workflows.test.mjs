@@ -150,6 +150,8 @@ test('migrate guards a missing site.why and a non-boolean fix.done', async () =>
 // --- consistent (shared file-existence gold standard + per-harness      ---
 // --- customization). Tests exercise prose containing " -- ", valid      ---
 // --- files/scopes after -- , no separator, last-occurrence for N, etc.  ---
+// --- (Task 4: now also assert on `dropped` in parse + harness results for ---
+// --- dropped evidence/scope observability after -- )                     ---
 
 test('shared parseWithSeparator and helpers: prose, valid evidence files, scope globs, last numeric', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gw-split-'))
@@ -161,20 +163,29 @@ test('shared parseWithSeparator and helpers: prose, valid evidence files, scope 
   assert.equal(res.accepted, false)
   assert.equal(res.hadMatch, false)
   assert.equal(res.left, 'just a plain problem description')
+  assert.ok(Array.isArray(res.dropped), 'dropped must always be present in parse result')
+  assert.equal(res.dropped.length, 0)
 
   // -- present but prose (no real files after, and no glob chars for scope)
+  // now observable via dropped (even though accepted=false); default validator marks suffix tokens
   res = await parseWithSeparator('why did foo -- bar happen in the logs')
   assert.equal(res.accepted, false)
   assert.equal(res.hadMatch, true)
   assert.ok(res.left.includes('why did foo -- bar happen in the logs'))
+  assert.ok(Array.isArray(res.dropped), 'dropped must always be present')
+  assert.ok(res.dropped.length > 0, 'prose -- nonexisting tokens must be reported in dropped for observability')
 
   // valid evidence file(s) after -- (root-cause gold std): must split and collect only valids
+  // also: the nonexistent after is dropped and observable
   res = await parseWithSeparator(`problem desc here -- ${real} nonexistent.txt`, { cwd: dir })
   assert.equal(res.accepted, true)
   assert.equal(res.left, 'problem desc here')
   assert.ok(Array.isArray(res.right))
   assert.equal(res.right.length, 1)
   assert.ok(res.right[0].endsWith('real-evidence.log'))
+  assert.ok(Array.isArray(res.dropped), 'dropped must always be present in parse result')
+  assert.equal(res.dropped.length, 1, 'one invalid token dropped in mixed case')
+  assert.ok(res.dropped[0].includes('nonexistent.txt'), 'dropped contains resolved path of the missing one')
 
   // multiple valids + invalids dropped (with log via opt)
   const real2 = join(dir, 'also.real')
@@ -184,6 +195,8 @@ test('shared parseWithSeparator and helpers: prose, valid evidence files, scope 
   assert.equal(res.accepted, true)
   assert.equal(res.right.length, 2)
   assert.ok(logs.some(l => l.includes('bad1')))
+  assert.ok(Array.isArray(res.dropped), 'dropped present')
+  assert.equal(res.dropped.length, 2, 'two invalids reported in dropped even on accepted split')
 
   // scope glob (even non-existing literal) via helper (migrate uses this)
   assert.equal(looksLikeScopeGlob('src/**/*.js'), true)
@@ -223,11 +236,15 @@ test('migrate -- scope separator: glob accepted (even non-file), plain non-exist
       let out = await migrateRun('do the rename -- src/**/*.js', { cwd: process.cwd() })
       assert.equal(out.migration, 'do the rename')
       assert.equal(out.scope, 'src/**/*.js')
+      assert.ok(Array.isArray(out.droppedScope), 'droppedScope present in migrate result')
+      assert.equal(out.droppedScope.length, 0, 'no drops for accepted glob scope')
 
       // prose with no-glob-char suffix that doesn't exist as file: no split
       out = await migrateRun('fix the thing where x -- y syntax appears', { cwd: process.cwd() })
       assert.ok(out.migration.includes('x -- y syntax'))
       assert.equal(out.scope, null)
+      assert.ok(Array.isArray(out.droppedScope), 'droppedScope present even on rejected scope (prose case)')
+      assert.ok(out.droppedScope.length > 0, 'TDD: rejected -- suffix tokens must appear in droppedScope for observability (raw tokens)')
 
       // using a real existing plain-ish target as scope (the file we created; .txt triggers heuristic too but ok)
       // to purely hit fallback we'd need a name w/o . but for test the glob heuristic path is covered;
@@ -235,6 +252,68 @@ test('migrate -- scope separator: glob accepted (even non-file), plain non-exist
       out = await migrateRun(`mig foo -- ${realScopeTarget}`, { cwd: process.cwd() })
       assert.equal(out.migration, 'mig foo')
       assert.ok(out.scope && out.scope.includes('realscope.txt'))
+      assert.ok(Array.isArray(out.droppedScope))
+      assert.equal(out.droppedScope.length, 0)
+    }
+  )
+
+  rmSync(dir, { recursive: true })
+})
+
+// --- TDD for dropped observability (Task 4): explicit case exercising drops ---
+// --- in both low-level parseWithSeparator result and high-level harness run() ---
+test('TDD: dropped evidence/scope after -- is observable in parse result and harness outputs (closes lossy-drop gap)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gw-drop-tdd-'))
+  const real = join(dir, 'real.log')
+  writeFileSync(real, 'ok')
+
+  // direct parse: mixed valid + drops
+  let p = await parseWithSeparator(`bug in foo -- ${real} /no/such/a /no/such/b`, { cwd: dir })
+  assert.equal(p.accepted, true)
+  assert.ok(Array.isArray(p.dropped))
+  assert.equal(p.dropped.length, 2, 'parse must report exactly the dropped resolved paths')
+  assert.ok(p.dropped.every(d => /no\/such/.test(d) || d.includes('no/such')))
+
+  // direct parse: pure drop case (hadMatch but !accepted) still surfaces dropped
+  p = await parseWithSeparator('prose here -- missing1.txt missing2.log', { cwd: dir })
+  assert.equal(p.accepted, false)
+  assert.equal(p.hadMatch, true)
+  assert.ok(Array.isArray(p.dropped))
+  assert.ok(p.dropped.length >= 2)
+
+  // harness: root-cause run() now includes droppedEvidenceFiles non-empty for mixed
+  await withMock(
+    async (prompt, opts) => {
+      if (opts?.schema && /hypotheses/.test(JSON.stringify(opts.schema))) {
+        return JSON.stringify({ hypotheses: [{ claim: 'X', evidence: '' }] })
+      }
+      if (/adversarialVerify|REFUTE/.test(prompt || '')) {
+        return JSON.stringify({ survives: true, kept: 3, refuted: 0, votes: [], keptClaims: [], refutedClaims: [] })
+      }
+      return 'ack'
+    },
+    async () => {
+      const out = await rootCauseRun(`crash -- ${real} ghost1.txt ghost2.txt`, { cwd: dir })
+      assert.ok(Array.isArray(out.droppedEvidenceFiles))
+      assert.ok(out.droppedEvidenceFiles.length === 2, 'harness root-cause must expose dropped in result JSON')
+      assert.ok(out.droppedEvidenceFiles.some(f => f.includes('ghost1')))
+      assert.ok(Array.isArray(out.evidenceFiles))
+      assert.equal(out.evidenceFiles.length, 1)
+    }
+  )
+
+  // harness: migrate run() exposes droppedScope for rejected plain after --
+  await withMock(
+    async (prompt) => {
+      if (/code-migration scout/.test(prompt)) return JSON.stringify({ sites: [] })
+      return 'ack'
+    },
+    async () => {
+      const out = await migrateRun('change x -- plainnonexistentdir', { cwd: process.cwd() })
+      assert.ok(Array.isArray(out.droppedScope))
+      assert.ok(out.droppedScope.length > 0, 'harness migrate must expose droppedScope (raw token) in result')
+      assert.equal(out.scope, null)
+      // note: droppedScope contains raw 'plainnonexistentdir' (or split if multi)
     }
   )
 
@@ -292,11 +371,21 @@ test('root-cause problem after -- uses file-existence (via shared); prose kept w
       let out = await rootCauseRun(`why the crash -- ${ev} notes.txt`, { cwd: dir })
       assert.ok(out.problem.includes('why the crash'))
       assert.ok(!out.problem.includes('notes.txt')) // stripped
-      // evidenceFiles not in public return, but problem split proves acceptance
+      // now dropped (and accepted evidence) are in public return for observability
+      assert.ok(Array.isArray(out.evidenceFiles), 'evidenceFiles now surfaced in root-cause result')
+      assert.equal(out.evidenceFiles.length, 1)
+      assert.ok(out.evidenceFiles[0].endsWith('stack.log'))
+      assert.ok(Array.isArray(out.droppedEvidenceFiles), 'droppedEvidenceFiles must be in harness result')
+      assert.equal(out.droppedEvidenceFiles.length, 1, 'the notes.txt after -- must be reported dropped')
+      assert.ok(out.droppedEvidenceFiles.some(f => f.includes('notes.txt')))
 
       // prose case: -- present, suffix tokens do not exist as files => full problem kept
+      // dropped still observable (non-empty) even though no evidence accepted
       out = await rootCauseRun('sales dropped -- see Q3 trend report', { cwd: dir })
       assert.ok(out.problem.includes('sales dropped -- see Q3 trend report'))
+      assert.ok(Array.isArray(out.droppedEvidenceFiles))
+      assert.ok(out.droppedEvidenceFiles.length > 0, 'prose -- case must still expose dropped tokens in harness result')
+      assert.equal(out.evidenceFiles.length, 0)
     }
   )
 

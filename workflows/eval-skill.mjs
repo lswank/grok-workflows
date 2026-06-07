@@ -34,6 +34,9 @@ export const meta = {
 // occurrence) for consistency with the last-" -- " separator logic in
 // root-cause and migrate. This is part of the unification for insidious
 // bug #2 (inconsistent "--" argument splitting). See src/parse-input.mjs .
+// (Note: eval-skill does not use parseWithSeparator for file/scope evidence after --
+//  (only numeric --N modifier via the related helper); dropped observability (Task 4)
+//  applies to the evidence/scope cases in root-cause + migrate via the parser.)
 // --------------------------------------------------------------------------
 
 const DEFAULT_N = 3
