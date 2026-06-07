@@ -25,6 +25,7 @@ import {
   adversarialVerify, fanOutSynthesize, classifyAndRoute,
   generateAndFilter, loopUntilDone, tournament,
   config, setConcurrency,
+  coerceBoolean,   // for post-processing bools from lenient schema results (see pitfalls below)
 } from '../src/engine.mjs'
 ```
 
@@ -56,6 +57,71 @@ schema instead, pass `strictSchema: true` per call (or set `config.strictSchema`
 nested `required`, and `items`, and a mismatch is retried like any other
 parse failure (ultimately `null`). Use it when a malformed field is better
 retried than silently coerced; keep the lenient default when you'd rather coerce.
+
+### Schema validation pitfalls & recommended patterns
+
+The default (lenient) behavior is **intentional** and documented: it keeps the
+"instruct + parse + retry" contract cheap and tolerant of the extra prose or
+harmless fields LLMs like to emit. However, it is a foot-gun for control
+fields.
+
+- **LLMs emit string "false", "0", wrong enum members, and omit nested objects**
+  surprisingly often, even when the schema says `"type": "boolean"` or
+  `"enum": ["A","B"]`. A bare `if (fix.done)` or `if (v.winner)` will treat
+  the string `"false"` as truthy and a bad enum as present.
+- **Always use strict equality or normalization for critical fields:**
+  - `if (fix.done !== true)`  (catches string "false", 0, etc. for "not done")
+  - `if (o.review?.approved === true)`
+  - `const v = VALID_VERDICTS.has(x.verdict) ? x.verdict : 'unverifiable'`
+  - `if (res.winner !== 'A' && res.winner !== 'B') { treat as failed }`
+- **Use the exported helper for booleans:** `import { coerceBoolean } from '../src/engine.mjs'`
+  ```js
+  const done = coerceBoolean(fix?.done);
+  if (done !== true) { /* flag incomplete; string "false" now safe */ }
+  ```
+- **asObject tolerance (common pattern):** many harnesses wrap schema results:
+  ```js
+  function asObject(maybe) {
+    if (maybe && typeof maybe === 'object' && !Array.isArray(maybe)) return maybe;
+    if (typeof maybe === 'string') { try { const p=JSON.parse(maybe); if(p&&typeof p==='object'&&!Array.isArray(p)) return p; } catch{} }
+    return null;
+  }
+  const audit = asObject(await agent(..., {schema: AUDIT_SCHEMA}));
+  if (audit && coerceBoolean(audit.evidenceHolds) === false) { downgrade... }
+  ```
+  (See deep-verify.mjs for the real version.)
+- **Prefer `strictSchema: true` (or the global env) when exact shape matters
+  and retries are acceptable.** Internal control schemas do this:
+  - `adversarialVerify` always passes `strictSchema: true` on its
+    `{refuted: boolean}` schema (a string "false" would corrupt majority vote).
+  - Update deep-verify and rule-mine skeptic to do the same for their
+    `evidenceHolds` / `reject` booleans and verdict enums.
+  - In your harness: for a tournament comparator enum or a "done" flag that
+    drives control flow, add `strictSchema: true`.
+- **Good vs bad (in a workflow using a schema with bool/enum):**
+
+  Bad (silent foot-gun):
+  ```js
+  const fix = await agent(..., { schema: FIX_SCHEMA }); // done: {type:'boolean'}
+  if (fix.done) { /* review */ } else { flag(); }
+  // string "false" (or "0") is truthy → wrongly reviews a partial fix
+  ```
+
+  Good (defensive or strict):
+  ```js
+  const fix = await agent(..., { schema: FIX_SCHEMA });
+  if (coerceBoolean(fix?.done) !== true) {
+    log('not completed'); return {..., needsAttention: [...]};
+  }
+  // or
+  const fix = await agent(..., { schema: FIX_SCHEMA, strictSchema: true });
+  // now fix.done is guaranteed boolean (or the whole agent retried to null)
+  ```
+
+See also the `strictSchema` row in README config table and the engine JSDoc.
+Existing harnesses (migrate, sort-tournament, deep-verify, rule-mine, eval-skill)
+already contain defensive `=== true` / `typeof === 'boolean'` / enum guards +
+comments exactly because of this — copy the pattern.
 
 ### `parallel(thunks) → Promise<(T|null)[]>`
 **Barrier.** Runs all thunks concurrently (capped at `config.concurrency`),
