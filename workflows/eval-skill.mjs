@@ -246,7 +246,7 @@ export async function run(input, ctx = {}) {
       requested: n,
       produced: 0,
       worktreesLeftForReview: true,
-      note: 'All candidate producers failed; no winner could be determined. Worktrees (if any) are preserved.',
+      note: 'All candidate producers failed; no winner could be determined. Worktrees (if any) are preserved. Review with `git worktree list`; after review run `git worktree prune` to clean up.',
     }
   }
 
@@ -304,7 +304,7 @@ export async function run(input, ctx = {}) {
 
   log(
     `winner: candidate #${winner} (tournament winner: #${tourneyWinner ?? 'n/a'}); ` +
-      `worktrees preserved for review`
+      `worktrees preserved for review — use \`git worktree list\`; after review run \`git worktree prune\``
   )
 
   return {
@@ -330,7 +330,8 @@ export async function run(input, ctx = {}) {
     worktreesLeftForReview: true,
     note:
       'Outputs were NOT auto-applied. Each candidate ran in its own git worktree; ' +
-      'inspect them and apply the winner manually. Use `git worktree list` to find them.',
+      'inspect them with `git worktree list` and apply the winner manually. ' +
+      'After review, run `git worktree prune` to clean up.',
   }
 }
 
