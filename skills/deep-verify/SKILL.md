@@ -59,6 +59,13 @@ The harness prints a single JSON object to stdout (progress logs go to stderr):
 `claims` is sorted problems-first: `contradicted`, then `unverifiable`
 (including support that was downgraded by the audit), then clean `supported`.
 
+**Note on reliability:** the harness internally uses `strictSchema: true` for its
+verdict enum and evidenceHolds/quality boolean schemas (and `coerceBoolean` for
+post-processing), plus the patterns documented in `src/SPEC.md` "Schema validation
+pitfalls & recommended patterns". The counts and "downgraded by audit" findings
+are therefore not vulnerable to the engine's default lenient (top-level-only)
+validation.
+
 ## What to do with the result
 
 1. Parse the JSON from stdout.
