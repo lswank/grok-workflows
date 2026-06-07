@@ -13,6 +13,8 @@
 //
 // Runs correctly under GROK_WORKFLOWS_MOCK=1: schema agents return objects,
 // plain agents return strings, failed agents return null — all handled.
+// The skeptic 'reject' boolean now uses strictSchema:true + coerceBoolean
+// (see "Schema validation pitfalls & recommended patterns" in SPEC.md).
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -22,6 +24,7 @@ import {
   adversarialVerify,
   generateAndFilter,
   log,
+  coerceBoolean,
 } from '../src/engine.mjs'
 
 export const meta = {
@@ -305,12 +308,14 @@ async function skepticReject(candidate) {
     {
       schema: skepticSchema,
       label: `skeptic: ${candidate.theme.slice(0, 28)}`,
+      strictSchema: true, // guarantee boolean 'reject' (see SPEC.md schema pitfalls; without this a string "true" would be ignored by the typeof guard)
       disallowedTools: ['run_terminal_cmd', 'Agent'],
     }
   )
   // Under mock, {mock:true} has no `reject` key -> treat as "don't reject" so the
-  // pipeline still surfaces a result. A real skeptic returns a boolean.
-  const reject = out && typeof out.reject === 'boolean' ? out.reject : false
+  // pipeline still surfaces a result. With strictSchema the real agent returns boolean;
+  // we use coerceBoolean for explicitness and per the new SPEC pitfalls section.
+  const reject = coerceBoolean(out && out.reject)
   if (reject) {
     log(`skeptic rejected: ${candidate.theme} — ${asString(out?.reason).slice(0, 80)}`)
     candidate._rejectedBy = 'skeptic'
