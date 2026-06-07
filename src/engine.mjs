@@ -931,6 +931,19 @@ export function totalAgents() {
 }
 
 /**
+ * Reset (or set) the global _totalAgents counter.
+ * Callers performing multiple independent top-level runs or repeated harness
+ * invocations inside a single long-lived process should call this between tasks
+ * (analogous to how setConcurrency() is used after mutating config.concurrency).
+ * The global cap check in agent() is preserved as an intra-run runaway backstop.
+ * @param {number} [n=0]  Optional value to set the counter to (default 0).
+ */
+export function resetTotalAgents(n = 0) {
+  const safe = Number.isFinite(n) && n >= 0 ? n : 0
+  _totalAgents = safe
+}
+
+/**
  * Retrieve and consume the last error message recorded for a failed agent() by its `label`
  * (from opts.label or the truncated prompt). Returns undefined if no recorded failure for that label.
  * Harnesses use this (post-parallel/pipeline of labeled agents) to attach actionable
