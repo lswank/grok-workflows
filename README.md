@@ -81,9 +81,18 @@ Each harness prints a JSON result to **stdout**; progress narration goes to
 | **rule-mine** | Mine recurring corrections from past sessions/reviews, cluster, verify, distill into `AGENTS.md` rules. | generate-and-filter |
 | **brainstorm-tournament** | Brainstorm many options (names, designs), run a rubric-scored tournament, return the top 3. | generate + tournament |
 | **eval-skill** | Run a task N ways in isolated worktrees, grade against a rubric, pick and explain the best. | best-of-N + grading |
+| **goal** | Repeat an inner workflow/task until an independent checker agent confirms a hard, explicit criterion is met (first-class implementation of the "pair with /goal" pattern). | loop-until + adversarial checker |
+| **loop** | Run any other harness (or a plain agent task) on a fixed interval (`10s` / `5m` / `1h` ...), with `--max` and dry-streak stopping. Composes with `/goal`. | recurring scheduler + delegation |
+| **write-workflow** | Describe a novel multi-agent process; Claude writes a complete, saveable, reusable `.mjs` harness using the engine primitives, executes it immediately for today's task, and returns the source so you can persist it. | dynamic script generation (the heart of "Claude writes the orchestration") |
 
 Run any of them with `node workflows/<name>.mjs "<input>"`, or
 `node src/cli.mjs <name> "<input>"`.
+
+User-saved workflows (from `write-workflow` + `save`, or written by hand) live in:
+- `~/.grok/workflows/<name>.mjs` (personal, every project)
+- `.grok/workflows/<name>.mjs` (project, checked in, shared with the team)
+
+`grok-workflows list` shows them (project > personal > bundled) and `grok-workflows <name> "input"` runs them. The `save` subcommand writes the script for you.
 
 ---
 
@@ -113,10 +122,14 @@ Then, inside Grok — from anywhere. Either name a harness directly:
 /deep-research Did Postgres add MERGE in v15 or v16?
 /triage ./incidents.txt
 /root-cause why did checkout conversion drop 12% last week
+/goal all high-severity items are fixed or escalated :: /triage ./queue.txt
+/loop 10m deep-research "current state of the permission model"
+/write-workflow 3 independent reviewers + tournament + goal-check for design proposals --save-as design-tournament
 ```
 
 …or use the umbrella **`/workflow`** entry (also triggered by saying `ultracode`)
-and let it route your task to the right harness:
+and let it route your task to the right harness (or to `write-workflow` when you
+want a brand-new reusable script generated for a novel process):
 
 ```
 /workflow rank these incidents by severity: login broken | footer typo | data loss
@@ -139,13 +152,60 @@ cwd and even through symlinks. Nothing is tied to where you cloned anything.
 > **A note on git:** the launcher and most harnesses run anywhere. Two harnesses —
 > `migrate` and `eval-skill` — use git-worktree isolation and therefore need the
 > *target* workspace to be a git repo (that's inherent to what they do, not how
-> they're invoked). The other seven run in any directory.
+> they're invoked). The others (including the new `goal`, `loop`, and
+> `write-workflow`) run in any directory.
 
 Manage the plugin with `grok plugin list`, `grok plugin update grok-workflows`,
-and `grok plugin uninstall grok-workflows`. Pair the repeatable ones with Grok's
-`/loop` to run them continuously (e.g. `/loop 1h /triage ./incidents.txt`).
+and `grok plugin uninstall grok-workflows`. The repeatable ones (`loop`, `triage`,
+`deep-research`, etc.) are designed to be paired with Grok's own scheduling or
+with the first-class `/loop` harness shipped here.
 
 ---
+
+## Dynamic workflow authoring ("Claude writes the script")
+
+This is the part that most directly matches (and exceeds) the Claude Code dynamic
+workflows experience described in the Anthropic docs and launch blog.
+
+Run:
+
+```
+/write-workflow <rich description of the exact multi-agent process you want>
+/workflow write a custom harness that ...
+ultracode: create a reusable workflow that ...
+```
+
+The harness:
+1. Uses a planner agent to pick the right engine primitives, verification
+   strategy, isolation, and stop conditions for *your* task.
+2. Asks a code-generation agent to emit a complete, contract-following
+   `workflows/<name>.mjs` (full source, ready to read, edit, and rerun).
+3. Immediately executes the generated script against a derived version of your
+   request so you get a useful result *today*.
+4. Returns the full `script` in the JSON result (plus `howToRunSaved` etc.).
+
+Then persist it:
+
+```
+grok-workflows save my-process --script -   # paste the script field, or
+# (or let the harness do it for you with `--save-as my-process` on the write call)
+```
+
+Future sessions (any directory) can run:
+
+```
+grok-workflows my-process "the real input for this run"
+# or inside Grok: /my-process "the real input..."
+```
+
+The saved script is a normal file you can `git add`, diff, PR, or hand to a
+teammate. It uses the same engine primitives as the bundled harnesses, so the
+quality patterns (adversarial verification, fresh contexts, quarantine, worktree
+isolation, `loopUntilDone`, tournaments, etc.) are applied exactly as you
+described them.
+
+This moves the *plan* into code that is versioned, reviewable, and repeatable —
+exactly the "the orchestration itself" benefit called out in the Claude spec.
 
 ## Writing your own harness
 
@@ -226,6 +286,50 @@ more (including the `coerceBoolean` helper for post-processing). See
 A workflow file exports `meta` and `run(input, ctx)` and ends with a small CLI
 tail so it runs standalone — copy any file in [`workflows/`](./workflows) as a
 template.
+
+## What this unlocks inside Grok Code (why it exceeds the original spec)
+
+Shipping first-class `/goal`, `/loop`, and especially `write-workflow` + the `save`
+UX on top of a production-grade engine with the full set of Claude-inspired patterns
+(fan-out + synthesize, adversarialVerify with strict booleans, tournament,
+loopUntilDone with rich dry-streak semantics, generateAndFilter, classifyAndRoute,
+worktree isolation, quarantine via disallowedTools, robust schema defense with
+`coerceBoolean` + `strictSchema`, the global agent cap + reset, self-locating
+plugin launchers, etc.) gives Grok Code users a *complete local implementation* of
+the dynamic workflows vision:
+
+- You can stay in flow and say `ultracode ...` or `/write-workflow ...` for any
+  hard, parallel, taste-based, or "I want this process codified and rerun-able"
+  task and get a tailored, reviewable JS harness instead of a one-off transcript.
+- The harnesses that ship (and the ones users save) structurally defeat agentic
+  laziness, self-preferential bias, and goal drift the same way the Claude Code
+  team documented — by moving the plan into deterministic JS and giving every
+  unit of work its own fresh `grok -p` context.
+- `/goal` + `/loop` are not "pair with Grok's built-ins" aspirations; they are
+  real, invocable, composable harnesses you can nest (`/loop 5m /goal '...' :: /triage ...`).
+- Saved workflows are ordinary files. They travel with the repo or live in your
+  home directory, show up in `grok-workflows list`, and become `/<name>` slash
+  commands for the whole team or just you.
+- Everything is testable in pure MOCK mode (`GROK_WORKFLOWS_MOCK=1`), so you can
+  develop and regression-test complex orchestrations without spending credits.
+- The same engine and primitives power both the 10+ bundled harnesses *and* the
+  ones Claude (via the writer) generates for you — there is no second-class path.
+
+In short: this turns Grok Code into a platform where the AI can not only *do*
+hard multi-agent work, but can *invent, codify, persist, and share the exact
+harness* that does that work — and you (or your team) can inspect it, version it,
+improve it, and run it on a schedule or until a goal is provably met.
+
+Credit where it is due: the patterns, terminology ("agentic laziness",
+"self-preferential bias", "goal drift", "fan-out-and-synthesize",
+"adversarial verification", the comparison table of subagents vs skills vs
+workflows, the `/deep-research` example, the `ultracode` trigger, the "save with
+`s`", the emphasis on resumable background runs, and the advice to combine with
+`/goal` and `/loop`) come directly from Anthropic's Claude Code dynamic workflows
+documentation and the June 2026 launch blog post. This project is a faithful,
+independent re-creation and extension of that design for the Grok / xAI CLI
+ecosystem, built in the open so the Grok community can have the same (and more)
+super-powers today.
 
 ---
 
