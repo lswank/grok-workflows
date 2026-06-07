@@ -48,10 +48,7 @@ export const config = {
   // deterministic tests, or assign config.mock to a function (prompt, opts) => string.
   mock: process.env.GROK_WORKFLOWS_MOCK === '1' ? defaultMock : null,
   // Hard ceiling on total agent() invocations per process — a runaway-loop
-  // backstop, set far above any real workflow. Sanitized >=1. The accumulator
-  // (_totalAgents) is global to the Node process; use resetTotalAgents()
-  // between independent top-level tasks in long-lived usage (REPL, server,
-  // repeated programmatic runs) so prior work does not permanently eat budget.
+  // backstop, set far above any real workflow. Sanitized >=1.
   maxTotalAgents: (() => {
     const n = Number(process.env.GROK_WORKFLOWS_MAX_AGENTS)
     return Number.isFinite(n) && n >= 1 ? n : 1000
@@ -123,18 +120,6 @@ export function log(message) {
 
 /**
  * Spawn one Grok headless agent and return its result.
- *
- * The module-global `config.maxTotalAgents` (default 1000 via
- * GROK_WORKFLOWS_MAX_AGENTS) is a simple runaway-loop backstop. Every call to
- * agent() is counted (see totalAgents()). When the cap is reached, agent()
- * throws immediately (before spawning). The counter only ever increments.
- *
- * For long-lived processes, servers, REPLs, or repeated top-level `run()` /
- * direct agent() usage inside one Node process, call `resetTotalAgents()`
- * (or `resetTotalAgents(0)`) between independent units of work. This prevents
- * successful agents from prior tasks permanently exhausting the budget for
- * later tasks. The cap check inside a single flow (no reset) remains effective
- * against true runaways.
  *
  * @param {string} prompt  The task for the agent.
  * @param {object} [opts]
@@ -225,16 +210,9 @@ async function _runOneAgent(prompt, opts) {
   if (code !== 0) {
     // grok reports real errors on stderr; fall back to stdout only if stderr is
     // empty. Surfacing stderr makes a failed spawn actually debuggable.
-    //
-    // IMPORTANT: do NOT truncate the child detail for error cases (unlike short
-    // labels/prompts elsewhere). Long tool/permission/runtime errors (e.g.
-    // "Agent building failed... auto_backg… RequirementError lists") must be
-    // fully preserved so they appear intact in the "▸ fail ..." and
-    // "▸ giveup ..." log lines that are the only diagnostics available to
-    // callers and harnesses when agent() ultimately returns null.
     const detail = (stderr && stderr.trim()) || (stdout && stdout.trim()) || '(no output)'
     throw new Error(
-      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${detail}`
+      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${truncate(detail, 300)}`
     )
   }
   // --output-format json => a single JSON object: {text, stopReason, sessionId, requestId}
@@ -243,11 +221,8 @@ async function _runOneAgent(prompt, opts) {
     obj = JSON.parse(stdout)
   } catch {
     // If grok ever prints stray lines, salvage the last JSON object on stdout.
-    // This is a failure path for the child (exit 0 but unusable output); preserve
-    // the *full* stdout in the Error (no truncate) for the same reason as the
-    // non-zero exit case: diagnostics must not be lost when retries give up.
     obj = _extractJson(stdout)
-    if (obj === undefined) throw new Error(`unparseable grok output: ${stdout}`)
+    if (obj === undefined) throw new Error(`unparseable grok output: ${truncate(stdout, 200)}`)
   }
   if (obj.stopReason && obj.stopReason !== 'EndTurn' && obj.stopReason !== 'end_turn') {
     log(`note   stopReason=${obj.stopReason}`)
@@ -808,31 +783,133 @@ function truncate(s, n) {
 }
 
 function defaultMock(prompt) {
-  // Deterministic stand-in for grok. If a JSON schema instruction is present,
-  // return a tiny object; otherwise echo a short ack. Tests usually override
-  // config.mock with something task-aware.
-  if (/JSON Schema:/.test(prompt)) return JSON.stringify({ mock: true })
+  // Deterministic stand-in for grok. When a JSON schema instruction (appended by
+  // _withSchemaInstruction for agent({schema})) is present, return a minimal
+  // *plausible* object satisfying top-level required keys and common harness
+  // structures (hypotheses, claims, verdict, etc.) so that plain
+  // GROK_WORKFLOWS_MOCK=1 runs of root-cause, deep-verify, migrate, etc.
+  // produce non-empty useful flows for demo/debug/ultracode instead of
+  // immediate dry/zero results. Non-schema path is unchanged (short ack).
+  // Heuristic inspects prompt text (which embeds the schema JSON) for known
+  // field names from bundled harnesses; falls back to required keys or {mock:true}.
+  // Harness regression tests still use their own withMock overrides.
+  if (/JSON Schema:/.test(prompt)) return _mockSchemaObject(prompt)
   return `[mock grok] ${truncate(prompt, 120)}`
 }
 
-/** Total agent() calls made so far this process (for budgeting/inspection).
- * The counter is a simple module-global accumulator (never auto-decremented).
- * It is only a runaway backstop; for repeated independent top-level work inside
- * one long-lived Node process (server, REPL, TUI loop, custom orchestrator),
- * call resetTotalAgents() between tasks so that one unit of work does not
- * permanently consume budget from later ones. */
-export function totalAgents() {
-  return _totalAgents
+/** Cheap heuristic to synthesize a minimal valid-ish response for common
+ * harness schemas when under default mock. Inspects the schema text embedded
+ * in the prompt rather than requiring a full registry or duplicating schemas.
+ */
+function _mockSchemaObject(prompt) {
+  const p = String(prompt || '')
+  // Common harness shapes (from root-cause, deep-verify, migrate, sort-tournament,
+  // eval-skill, adversarialVerify, classifyAndRoute, etc.). Order matters for
+  // overlapping keywords; specific first.
+  if (/"hypotheses"|\bhypotheses\b/i.test(p)) {
+    return JSON.stringify({
+      hypotheses: [
+        { claim: 'mock hypothesis: the issue is caused by X under condition Y', evidence: 'observed in logs slice; matches code path Z' },
+      ],
+    })
+  }
+  if (/"claims"|\bclaims\b/i.test(p)) {
+    return JSON.stringify({
+      claims: [
+        { id: 'c1', text: 'mock extracted claim: component Foo returns bar when baz is set' },
+      ],
+    })
+  }
+  if (/"verdict"|\bverdict\b/i.test(p)) {
+    return JSON.stringify({
+      id: 'c1',
+      verdict: 'supported',
+      evidence: 'mock evidence from source grep and file read',
+      source: 'src/example.js:42 and https://example.com/doc',
+    })
+  }
+  if (/evidenceHolds|\bevidencHolds\b/i.test(p)) {
+    return JSON.stringify({
+      evidenceHolds: true,
+      reason: 'mock audit: evidence holds under default mock for demo flow',
+      quality: 'medium',
+    })
+  }
+  if (/"done"|\bdone\b/i.test(p) && (/"path"|\bpath\b/i.test(p) || /FIX|migration|diff/i.test(p))) {
+    return JSON.stringify({
+      path: 'mock/file.js',
+      summary: 'mock applied the described change',
+      done: true,
+      diff: 'diff --git a/mock/file.js b/mock/file.js\nindex 000..111 100644\n--- a/...\n+++ b/...\n@@ -1 +1 @@\n-mock old\n+mock new',
+    })
+  }
+  if (/"refuted"|\brefuted\b/i.test(p)) {
+    return JSON.stringify({
+      refuted: false,
+      reason: 'mock: could not find concrete refuting evidence under default',
+    })
+  }
+  if (/"label"|\blabel\b/i.test(p) && /classify|route/i.test(p)) {
+    return JSON.stringify({ label: 'default' })
+  }
+  if (/"winner"|\bwinner\b/i.test(p)) {
+    return JSON.stringify({ winner: 'A', reason: 'mock tournament: A wins per comparator heuristic' })
+  }
+  if (/"sites"|\bsites\b/i.test(p)) {
+    return JSON.stringify({
+      sites: [{ path: 'mock/src/target.js', why: 'matches the migration description pattern' }],
+    })
+  }
+  if (/"score"|\bscore\b/i.test(p)) {
+    return JSON.stringify({ candidate: 1, score: 7, justification: 'mock score: satisfies rubric criteria in demo' })
+  }
+  if (/"candidate"|\bcandidate\b/i.test(p) && /approach|summary/i.test(p)) {
+    return JSON.stringify({
+      candidate: 1,
+      approach: 'mock approach',
+      summary: 'mock summary of the changes made in the isolated worktree',
+    })
+  }
+
+  // Graceful fallback for unknown schemas: satisfy top-level required keys
+  // with simple placeholder values (string/num/bool/array as appropriate).
+  // Try to parse a "required": [...] from the embedded schema JSON text.
+  const reqMatch = p.match(/"required"\s*:\s*\[\s*([^\]]+?)\s*\]/)
+  if (reqMatch) {
+    const keys = reqMatch[1]
+      .split(/,\s*/)
+      .map((s) => s.replace(/["']/g, '').trim())
+      .filter(Boolean)
+    const obj = {}
+    for (const k of keys) {
+      if (k === 'hypotheses' || k === 'claims' || k === 'sites' || k === 'votes') {
+        obj[k] = []
+      } else if (k === 'done' || k === 'refuted' || k === 'evidenceHolds' || k === 'approved' || k === 'survives') {
+        obj[k] = true // choose useful true for demo flows
+      } else if (k === 'verdict') {
+        obj[k] = 'unverifiable'
+      } else if (k === 'winner') {
+        obj[k] = 'A'
+      } else if (k === 'label') {
+        obj[k] = 'default'
+      } else if (k === 'score' || k === 'candidate' || k === 'count') {
+        obj[k] = 1
+      } else {
+        obj[k] = `mock ${k}`
+      }
+    }
+    // Ensure common collection keys are non-empty for useful harness runs.
+    if (obj.hypotheses && obj.hypotheses.length === 0) obj.hypotheses = [{ claim: 'mock claim' }]
+    if (obj.claims && obj.claims.length === 0) obj.claims = [{ id: 'c1', text: 'mock text' }]
+    if (obj.sites && obj.sites.length === 0) obj.sites = [{ path: 'f', why: 'm' }]
+    return JSON.stringify(obj)
+  }
+
+  // Last resort (preserves prior tiny mock behavior for unrecognized schemas).
+  return JSON.stringify({ mock: true })
 }
 
-/** Reset (or set) the global _totalAgents counter.
- * Callers performing multiple independent top-level runs or repeated harness
- * invocations inside a single long-lived process should call this between tasks
- * (analogous to how setConcurrency() is used after mutating config.concurrency).
- * The global cap check in agent() is preserved as an intra-run runaway backstop.
- * @param {number} [n=0]  Optional value to set the counter to (default 0).
- */
-export function resetTotalAgents(n = 0) {
-  const safe = Number.isFinite(n) && n >= 0 ? n : 0
-  _totalAgents = safe
+/** Total agent() calls made so far this process (for budgeting/inspection). */
+export function totalAgents() {
+  return _totalAgents
 }

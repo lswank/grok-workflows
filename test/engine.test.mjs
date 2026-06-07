@@ -673,3 +673,61 @@ test('true runaway inside one flow (no reset) still hits the cap backstop', asyn
     resetTotalAgents(startCount)
   }
 })
+// TDD test for improved defaultMock: exercises the DEFAULT mock (no withMock override)
+// using real harness schemas copied from root-cause / deep-verify. Under current
+// defaultMock this will produce {mock:true} which lacks the required keys/arrays,
+// causing harnesses like root-cause to see 0 hypotheses and dry-run immediately.
+// After the fix, defaultMock will return plausible minimal shapes so plain MOCK=1
+// runs of harnesses produce non-empty demo/debug output.
+test('defaultMock with harness schema returns plausible non-empty shape (hypotheses, claims) — uses global default, no withMock', async () => {
+  // hypothesisSchema from workflows/root-cause.mjs (used by hypothesis generator)
+  const hypothesisSchema = {
+    type: 'object',
+    required: ['hypotheses'],
+    properties: {
+      hypotheses: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['claim'],
+          properties: {
+            claim: { type: 'string' },
+            evidence: { type: 'string' },
+          },
+        },
+      },
+    },
+  }
+
+  // EXTRACT_SCHEMA from workflows/deep-verify.mjs
+  const extractSchema = {
+    type: 'object',
+    required: ['claims'],
+    properties: {
+      claims: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id', 'text'],
+          properties: {
+            id: { type: 'string' },
+            text: { type: 'string' },
+          },
+        },
+      },
+    },
+  }
+
+  // These hit the real defaultMock because no withMock wrapper.
+  const hyp = await agent('generate competing root cause hypotheses', { schema: hypothesisSchema })
+  assert.ok(hyp && typeof hyp === 'object' && !Array.isArray(hyp), 'defaultMock schema path must return object')
+  assert.ok(Array.isArray(hyp.hypotheses), 'must have .hypotheses array (not just {mock:true})')
+  assert.ok(hyp.hypotheses.length >= 1, 'hypotheses array should be non-empty for useful mock')
+  assert.ok(typeof hyp.hypotheses[0]?.claim === 'string' && hyp.hypotheses[0].claim.length > 0, 'each hyp must have a string claim')
+
+  const ext = await agent('extract verifiable claims from the doc', { schema: extractSchema })
+  assert.ok(ext && typeof ext === 'object' && !Array.isArray(ext))
+  assert.ok(Array.isArray(ext.claims), 'must have .claims array')
+  assert.ok(ext.claims.length >= 1, 'claims array should be non-empty for useful mock')
+  assert.ok(typeof ext.claims[0]?.id === 'string' && typeof ext.claims[0]?.text === 'string', 'each claim must have id and text')
+})
