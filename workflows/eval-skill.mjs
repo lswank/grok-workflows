@@ -15,6 +15,7 @@
 
 import { agent, parallel, tournament, log } from '../src/engine.mjs'
 import { spawn } from 'node:child_process'
+import { findLastNumericModifier } from '../src/parse-input.mjs'
 
 export const meta = {
   name: 'eval-skill',
@@ -28,6 +29,11 @@ export const meta = {
 //   -- N   sets the number of candidates (default 3)
 //   :: ... sets the grading rubric (free text)
 // Both are optional and order-independent.
+//
+// The --N handling now uses the shared findLastNumericModifier (greedy LAST
+// occurrence) for consistency with the last-" -- " separator logic in
+// root-cause and migrate. This is part of the unification for insidious
+// bug #2 (inconsistent "--" argument splitting). See src/parse-input.mjs .
 // --------------------------------------------------------------------------
 
 const DEFAULT_N = 3
@@ -47,12 +53,16 @@ function parseInput(input) {
     if (r) rubric = r
   }
 
-  // Pull N (a "-- <int>" token, anywhere in what remains).
-  const nMatch = task.match(/(?:^|\s)--\s*(\d+)\b/)
+  // Pull N (a "-- <int>" token, anywhere in what remains). Use LAST occurrence
+  // (greedy) via shared helper, modeled on the evidence/scope "last -- " split.
+  // Robustness: if a task description contains multiple --N-like tokens, the
+  // final one wins as the count (less likely to mangle early prose numbers).
+  const nMatch = findLastNumericModifier(task)
   if (nMatch) {
     const parsed = parseInt(nMatch[1], 10)
     if (Number.isFinite(parsed) && parsed > 0) n = parsed
-    task = task.replace(nMatch[0], ' ').trim()
+    // surgically remove only the matched last occurrence (index-based)
+    task = (task.slice(0, nMatch.index) + ' ' + task.slice(nMatch.index + nMatch[0].length)).trim()
   }
 
   // Clamp to something sane; log if we clamp so there are no silent caps.
