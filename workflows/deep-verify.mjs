@@ -16,10 +16,13 @@
 //
 // Runs correctly under GROK_WORKFLOWS_MOCK=1: agent() returns an object when a
 // schema is passed and a string otherwise, and null on failure. Every branch
-// here tolerates string / object / null defensively.
+// here tolerates string / object / null defensively. Critical control fields
+// (verdict enum, evidenceHolds bool) now use strictSchema:true per the
+// "Schema validation pitfalls & recommended patterns" section in SPEC.md;
+// we also demonstrate coerceBoolean for post-processing.
 
 import { readFile } from 'node:fs/promises'
-import { agent, pipeline, log } from '../src/engine.mjs'
+import { agent, pipeline, log, coerceBoolean } from '../src/engine.mjs'
 
 export const meta = {
   name: 'deep-verify',
@@ -194,6 +197,7 @@ export async function run(input, ctx = {}) {
             schema: VERDICT_SCHEMA,
             label: `verify:${claim.id}`,
             effort: 'high',
+            strictSchema: true, // guarantee enum 'verdict' (lenient would allow bad strings; see SPEC pitfalls)
             // Investigator must not delegate to sub-agents; it does the work.
             disallowedTools: ['Agent'],
           }
@@ -249,6 +253,7 @@ export async function run(input, ctx = {}) {
             schema: AUDIT_SCHEMA,
             label: `audit:${res.id}`,
             effort: 'high',
+            strictSchema: true, // guarantee boolean 'evidenceHolds' and quality enum (lenient foot-gun: "false" would bypass === false check and wrongly keep supported claim)
             disallowedTools: ['Agent'],
           }
         )
@@ -260,7 +265,9 @@ export async function run(input, ctx = {}) {
         return { ...res, audited: false, auditNote: 'audit agent failed' }
       }
 
-      if (audit.evidenceHolds === false) {
+      // Use coerceBoolean (or the now-guaranteed boolean from strictSchema) + reference the documented pitfalls.
+      // See SPEC.md "Schema validation pitfalls..." and the engine coerceBoolean helper.
+      if (coerceBoolean(audit.evidenceHolds) === false) {
         log(`stage 3: ${res.id} evidence DID NOT hold — downgrading to unverifiable`)
         return {
           ...res,
