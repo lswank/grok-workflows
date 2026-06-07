@@ -17,7 +17,6 @@ import {
   _extractJson,
   _validateDeep,
   config,
-  setVerbose,
 } from '../src/engine.mjs'
 
 // Helper: install a task-aware mock for the duration of a test.
@@ -438,7 +437,6 @@ test('_extractJson ignores single-quote chars (they are not string delimiters fo
   // ' chars do not flip inStr; a later valid double-quoted JSON wins.
   assert.deepEqual(_extractJson("it's {'not': 'json'} but {\"yes\":1}"), { yes: 1 })
 })
-
 // --- spawn failure truncation behavior (exercises real child process error path) ---
 
 test('agent() preserves full long child stderr on spawn failure (code != 0) without aggressive ~300-char truncate', async () => {
@@ -602,5 +600,76 @@ test('agent() preserves full long stdout on unparseable output (exit 0, bad JSON
       failLineMatch[0].length > 500,
       `fail log line should contain untruncated long stdout detail (len=${failLineMatch[0].length})`
     )
+  }
+})
+// --- totalAgents / maxTotalAgents cap + reset (TDD for long-lived/multi-run) ---
+
+test('totalAgents() accumulator, cap reached error, and resetTotalAgents() for repeated work', async () => {
+  const prevMax = config.maxTotalAgents
+  const startCount = totalAgents()
+  try {
+    // Drive with a small relative budget so test is isolated from prior suite agents.
+    config.maxTotalAgents = startCount + 2
+
+    await withMock(async () => 'ok', async () => {
+      // Can create up to the relative cap.
+      const a1 = await agent('drive-1')
+      const a2 = await agent('drive-2')
+      assert.ok(a1 && a2)
+      assert.equal(totalAgents(), startCount + 2)
+
+      // Next one must hit the cap (the backstop).
+      await assert.rejects(
+        async () => { await agent('would-exceed') },
+        /agent\(\) cap reached/i
+      )
+      assert.equal(totalAgents(), startCount + 2) // unchanged on the throwing call
+    })
+
+    // With the stub reset (no-op), counter is still high: even "reset" then raising max
+    // temporarily will not let new agents through until real reset impl lowers it.
+    // (This drives the RED failure on the post-reset success part.)
+    resetTotalAgents(startCount)
+
+    config.maxTotalAgents = startCount + 5
+    await withMock(async () => 'ok', async () => {
+      // After "reset", we expect to be able to create more (this will fail under stub).
+      const a3 = await agent('post-reset-3')
+      assert.ok(a3, 'post-reset agent should succeed once counter is actually lowered')
+      assert.equal(totalAgents(), startCount + 1)
+    })
+  } finally {
+    config.maxTotalAgents = prevMax
+    // Leave the suite counter in the state it was before this test (idempotent cleanup).
+    resetTotalAgents(startCount)
+  }
+})
+
+test('true runaway inside one flow (no reset) still hits the cap backstop', async () => {
+  const prevMax = config.maxTotalAgents
+  const startCount = totalAgents()
+  let hit = false
+  try {
+    config.maxTotalAgents = startCount + 3
+    await withMock(async () => 'ok', async () => {
+      // A hot loop of agents without calling reset must still be stopped by the cap.
+      for (let i = 0; i < 10; i++) {
+        try {
+          await agent(`runaway-${i}`)
+        } catch (e) {
+          if (/cap reached/i.test(String(e.message || e))) {
+            hit = true
+            break
+          }
+          throw e
+        }
+      }
+      assert.ok(hit, 'intra-run hot loop of agent() calls without reset must hit cap')
+      // Counter should have stopped at the cap.
+      assert.equal(totalAgents(), startCount + 3)
+    })
+  } finally {
+    config.maxTotalAgents = prevMax
+    resetTotalAgents(startCount)
   }
 })

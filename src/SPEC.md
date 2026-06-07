@@ -25,6 +25,7 @@ import {
   adversarialVerify, fanOutSynthesize, classifyAndRoute,
   generateAndFilter, loopUntilDone, tournament,
   config, setConcurrency,
+  totalAgents, resetTotalAgents,  // global agent counter + reset for long-lived / multi-run usage (runaway backstop)
   coerceBoolean,   // for post-processing bools from lenient schema results (see pitfalls below)
 } from '../src/engine.mjs'
 ```
@@ -44,6 +45,30 @@ Key `opts`: `model`, `effort` (low|medium|high|xhigh|max), `schema`, `label`,
 `['run_terminal_cmd']` to block shell), `maxTurns`, `rules` (guardrail string),
 `cwd`, `noProjectRoot`, `sessionId`, `allow`, `deny`, `disableWebSearch`,
 `strictSchema`.
+
+**Runaway backstop (maxTotalAgents / totalAgents / resetTotalAgents).**
+`agent()` maintains a simple process-global counter (`_totalAgents`, exposed
+read-only via `totalAgents()`). `config.maxTotalAgents` (default 1000,
+`GROK_WORKFLOWS_MAX_AGENTS`) is a hard ceiling checked at the *start* of every
+`agent()` call; exceeding it throws `agent() cap reached (...)`. This is
+intentionally a "runaway-loop backstop" (far above any realistic workflow) and
+the counter only ever goes up.
+
+- In normal one-shot CLI / `node workflows/*.mjs` usage the process ends after
+  one harness, so accumulation is irrelevant.
+- For long-lived or programmatic repeated use (importing the engine in a
+  server, REPL session, custom orchestrator, Grok TUI `/loop`, or calling
+  multiple top-level `run()`s in one `node` process) the counter would
+  eventually starve later work. Call `resetTotalAgents()` (or
+  `resetTotalAgents(0)`) between such independent top-level tasks. It is the
+  direct analog of `setConcurrency()`.
+- The cap check is *not* removed or made per-scope by default — a true
+  intra-task runaway (hot loop of `agent()` calls with no reset) must still be
+  caught inside that task.
+- `resetTotalAgents(n)` accepts an optional value (rarely used; mostly for
+  test cleanup to restore a prior count).
+
+See also the JSDoc in `src/engine.mjs` and the config table in README.md.
 
 **Schema validation is lightweight by default.** With `schema` set, the engine
 only checks that the value is the right top-level kind and that top-level

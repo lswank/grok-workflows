@@ -199,6 +199,8 @@ const verdicts = await parallel(claims.map((c) => () => adversarialVerify(c.text
 | `generateAndFilter(gen, keep, opts?)` | → `kept[]` | ideas → dedupe → verify |
 | `loopUntilDone(roundFn, opts?)` | → `items[]` | unknown-size discovery |
 | `tournament(items, comparator)` | → `{winner, rounds}` | pick the best by pairwise comparison |
+| `totalAgents()` | → `number` | current value of the global agent counter (runaway backstop) |
+| `resetTotalAgents(n?)` | (mutates) | reset the global counter (for repeated runs in one process; see config) |
 
 `agent()` options include `model`, `effort`, `schema`, `isolation:'worktree'`,
 `tools` / `disallowedTools` (e.g. `['Agent']` to block sub-spawning,
@@ -238,7 +240,7 @@ All via environment variables (or mutate the exported `config` object):
 | `GROK_WORKFLOWS_CONCURRENCY` | `min(8, cores−2)` (clamped >=1) | max agents running at once |
 | `GROK_WORKFLOWS_RETRIES` | `2` (clamped >=0) | per-agent retries on failure / bad JSON |
 | `GROK_WORKFLOWS_TIMEOUT_MS` | `0` (off) | per-agent timeout |
-| `GROK_WORKFLOWS_MAX_AGENTS` | `1000` (clamped >=1) | runaway-loop backstop |
+| `GROK_WORKFLOWS_MAX_AGENTS` | `1000` (clamped >=1) | runaway-loop backstop (see totalAgents() / resetTotalAgents() in src/engine.mjs; call reset between top-level tasks in long-lived processes) |
 | `GROK_WORKFLOWS_QUIET` | unset | `1` silences progress narration |
 | `GROK_WORKFLOWS_MOCK` | unset | `1` stubs every agent (no grok spawned) |
 | `GROK_WORKFLOWS_STRICT_SCHEMA` | unset | `1` enables deep/nested schema validation (type, enum, items, nested required) instead of lenient top-level only. **Default is intentionally lenient** — see the "Schema validation pitfalls & recommended patterns" subsection in [`src/SPEC.md`](./src/SPEC.md) and use `coerceBoolean` / `=== true` guards (or this flag) for bool/enum control fields. |

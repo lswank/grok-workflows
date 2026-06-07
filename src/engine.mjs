@@ -48,7 +48,10 @@ export const config = {
   // deterministic tests, or assign config.mock to a function (prompt, opts) => string.
   mock: process.env.GROK_WORKFLOWS_MOCK === '1' ? defaultMock : null,
   // Hard ceiling on total agent() invocations per process — a runaway-loop
-  // backstop, set far above any real workflow. Sanitized >=1.
+  // backstop, set far above any real workflow. Sanitized >=1. The accumulator
+  // (_totalAgents) is global to the Node process; use resetTotalAgents()
+  // between independent top-level tasks in long-lived usage (REPL, server,
+  // repeated programmatic runs) so prior work does not permanently eat budget.
   maxTotalAgents: (() => {
     const n = Number(process.env.GROK_WORKFLOWS_MAX_AGENTS)
     return Number.isFinite(n) && n >= 1 ? n : 1000
@@ -120,6 +123,18 @@ export function log(message) {
 
 /**
  * Spawn one Grok headless agent and return its result.
+ *
+ * The module-global `config.maxTotalAgents` (default 1000 via
+ * GROK_WORKFLOWS_MAX_AGENTS) is a simple runaway-loop backstop. Every call to
+ * agent() is counted (see totalAgents()). When the cap is reached, agent()
+ * throws immediately (before spawning). The counter only ever increments.
+ *
+ * For long-lived processes, servers, REPLs, or repeated top-level `run()` /
+ * direct agent() usage inside one Node process, call `resetTotalAgents()`
+ * (or `resetTotalAgents(0)`) between independent units of work. This prevents
+ * successful agents from prior tasks permanently exhausting the budget for
+ * later tasks. The cap check inside a single flow (no reset) remains effective
+ * against true runaways.
  *
  * @param {string} prompt  The task for the agent.
  * @param {object} [opts]
@@ -800,7 +815,24 @@ function defaultMock(prompt) {
   return `[mock grok] ${truncate(prompt, 120)}`
 }
 
-/** Total agent() calls made so far this process (for budgeting/inspection). */
+/** Total agent() calls made so far this process (for budgeting/inspection).
+ * The counter is a simple module-global accumulator (never auto-decremented).
+ * It is only a runaway backstop; for repeated independent top-level work inside
+ * one long-lived Node process (server, REPL, TUI loop, custom orchestrator),
+ * call resetTotalAgents() between tasks so that one unit of work does not
+ * permanently consume budget from later ones. */
 export function totalAgents() {
   return _totalAgents
+}
+
+/** Reset (or set) the global _totalAgents counter.
+ * Callers performing multiple independent top-level runs or repeated harness
+ * invocations inside a single long-lived process should call this between tasks
+ * (analogous to how setConcurrency() is used after mutating config.concurrency).
+ * The global cap check in agent() is preserved as an intra-run runaway backstop.
+ * @param {number} [n=0]  Optional value to set the counter to (default 0).
+ */
+export function resetTotalAgents(n = 0) {
+  const safe = Number.isFinite(n) && n >= 0 ? n : 0
+  _totalAgents = safe
 }
