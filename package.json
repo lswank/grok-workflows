@@ -18,6 +18,7 @@
     "node": ">=18"
   },
   "files": [
+    ".claude-plugin/",
     "src/",
     "workflows/",
     "skills/",

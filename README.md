@@ -87,22 +87,27 @@ Run any of them with `node workflows/<name>.mjs "<input>"`, or
 
 ---
 
-## Using them inside Grok (slash commands)
+## Using them inside Grok (install as a plugin)
 
-Each harness ships with a sibling **skill** under [`skills/`](./skills). A skill
-tells Grok's main agent to run the bundled harness via the shell and act on the
-JSON it returns — it delegates to the deterministic engine rather than improvising
-the orchestration.
+grok-workflows ships as a **grok plugin** — one user-scoped install that exposes
+every harness as a slash command in *every* Grok session, in any directory (git
+repo or not). No per-repo setup, no `<repo>` placeholder to edit, no `PATH`
+changes.
 
-Install them for your user so they show up as slash commands:
+Install it once with `grok plugin install` — from GitHub, or from a local clone:
 
 ```bash
-# symlink (or copy) the skills into Grok's user skill dir
-for d in skills/*/; do ln -s "$PWD/$d" "$HOME/.grok/skills/$(basename "$d")"; done
-grok inspect            # confirm they're discovered
+# from GitHub (shorthand, full URL, or user/repo@ref all work)
+grok plugin install lswank/grok-workflows --trust
+
+# …or from a local checkout
+git clone https://github.com/lswank/grok-workflows && cd grok-workflows
+grok plugin install . --trust
+
+grok inspect            # confirm the skills are discovered
 ```
 
-Then, inside Grok:
+Then, inside Grok — from anywhere:
 
 ```
 /deep-research Did Postgres add MERGE in v15 or v16?
@@ -110,12 +115,21 @@ Then, inside Grok:
 /root-cause why did checkout conversion drop 12% last week
 ```
 
-> The skills reference the harness by path. After installing, set the repo path
-> in each `SKILL.md` (they ship with a `<repo>` placeholder), or keep the symlink
-> approach and run from the repo root.
+**How invocation works (no path anywhere):** each skill bundles a tiny
+self-locating launcher at `skills/<name>/scripts/run.mjs`. Grok announces the
+skill's absolute path in its system context; the skill tells the model to run that
+launcher, and the launcher finds its sibling harness from its *own* on-disk
+location (`import.meta.url`) — not from the working directory — so it works in any
+cwd and even through symlinks. Nothing is tied to where you cloned anything.
 
-Pair the repeatable ones with Grok's `/loop` to run them continuously (e.g.
-`/loop 1h /triage ./incidents.txt`).
+> **A note on git:** the launcher and most harnesses run anywhere. Two harnesses —
+> `migrate` and `eval-skill` — use git-worktree isolation and therefore need the
+> *target* workspace to be a git repo (that's inherent to what they do, not how
+> they're invoked). The other seven run in any directory.
+
+Manage the plugin with `grok plugin list`, `grok plugin update grok-workflows`,
+and `grok plugin uninstall grok-workflows`. Pair the repeatable ones with Grok's
+`/loop` to run them continuously (e.g. `/loop 1h /triage ./incidents.txt`).
 
 ---
 

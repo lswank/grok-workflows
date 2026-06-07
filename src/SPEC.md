@@ -119,7 +119,15 @@ item to `null` and skips its rest.
 ## Authoring rules for `skills/<name>/SKILL.md`
 
 Each workflow gets a sibling skill so it's invocable inside Grok as a slash
-command. Format (see Grok's skills doc):
+command. The skill ships inside the grok-workflows **plugin** and invokes its
+harness through a bundled self-locating launcher — never a hardcoded path. Two
+files per skill:
+
+1. `skills/<name>/scripts/run.mjs` — the launcher. It is byte-identical across
+   every skill: it derives the skill name from its own directory and spawns
+   `<plugin-root>/workflows/<name>.mjs`, locating the plugin from its OWN path
+   (`import.meta.url`), not from `cwd`. Copy it verbatim from any existing skill.
+2. `skills/<name>/SKILL.md` — format (see Grok's skills doc):
 
 ```markdown
 ---
@@ -137,19 +145,29 @@ metadata:
 `/deep-research <question>`
 
 ## How it runs
-This skill executes the bundled grok-workflows harness. Run:
+This skill bundles a self-locating launcher at `<skill-dir>/scripts/run.mjs`,
+where `<skill-dir>` is this skill's own directory — its absolute path is announced
+in your system context. Derive the launcher path from that announced SKILL.md path
+and inline the absolute path into a single `run_terminal_cmd` call (don't rely on
+cwd or a shell variable). The launcher finds its bundled harness itself:
 
 \`\`\`bash
-node <repo>/workflows/deep-research.mjs "<question>"
+node <skill-dir>/scripts/run.mjs "<question>"
 \`\`\`
 
 …followed by what the agent should do with the result (summarize, write a file,
-etc). Reference `run_terminal_cmd` as the tool to invoke it.
+etc).
 ```
 
-The skill body should tell Grok's main agent to run the harness via
-`run_terminal_cmd` and then act on the JSON it prints — NOT to re-implement the
-orchestration inline. Keep skills focused: one skill per workflow.
+This `<skill-dir>` is NOT a placeholder the user edits — Grok announces every
+skill's absolute path at load time (the same convention Grok's own bundled skills
+use for their `scripts/` helpers), so the model resolves it at runtime. The skill
+body should tell Grok's main agent to run the launcher and then act on the JSON it
+prints — NOT to re-implement the orchestration inline. One skill per workflow.
+
+The repo doubles as a grok plugin: `.claude-plugin/plugin.json` is the manifest,
+and `skills/` + `workflows/` + `src/` all travel together when it's installed via
+`grok plugin install`.
 
 ## Testing without burning xAI credits
 

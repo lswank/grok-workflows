@@ -29,15 +29,19 @@ Variants:
 ## How it runs
 
 This skill delegates to the bundled grok-workflows harness — do NOT re-implement
-the ranking inline. Run it with `run_terminal_cmd`:
+the ranking inline. It bundles a self-locating launcher at
+`<skill-dir>/scripts/run.mjs`, where `<skill-dir>` is this skill's own directory
+(its absolute path is announced in your system context). Derive the launcher path
+from that announced SKILL.md path and inline the absolute path into a single
+`run_terminal_cmd` call — don't rely on the working directory or a shell variable:
 
 ```bash
-node <repo>/workflows/sort-tournament.mjs "<criterion> :: item1 | item2 | ..."
+node <skill-dir>/scripts/run.mjs "<criterion> :: item1 | item2 | ..."
 ```
 
-(Replace `<repo>` with the absolute path to this grok-workflows checkout. For a
-long item list, write the items to a temp file with `criterion: ...` as the first
-line and pass that file path instead.)
+(The launcher locates its bundled harness itself, so no repository path is needed.
+For a long item list, write the items to a temp file with `criterion: ...` as the
+first line and pass that file path instead.)
 
 The harness prints a JSON object to stdout:
 

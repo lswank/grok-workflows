@@ -23,12 +23,16 @@ Examples:
 
 ## How it runs
 
-Execute the bundled harness with `run_terminal_cmd` (replace `<repo>` with this
-repository's absolute path, and pass the user's request, quoted). The optional
-` -- <scope>` suffix scopes the search to a dir or glob:
+This skill bundles a self-locating launcher at `<skill-dir>/scripts/run.mjs` —
+`<skill-dir>` is this skill's own directory, whose absolute path is announced in
+your system context when the skill loads. Derive the launcher path from that
+announced SKILL.md path and inline the absolute path into a single
+`run_terminal_cmd` call (don't rely on the working directory or a shell variable).
+The launcher locates its bundled harness itself, so no repository path is needed.
+The optional ` -- <scope>` suffix scopes the search to a dir or glob:
 
 ```bash
-node <repo>/workflows/migrate.mjs "<migration description> -- <scope>"
+node <skill-dir>/scripts/run.mjs "<migration description> -- <scope>"
 ```
 
 The harness prints a single JSON object to stdout (progress logs go to stderr):

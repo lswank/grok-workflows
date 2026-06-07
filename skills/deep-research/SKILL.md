@@ -18,11 +18,15 @@ re-implement any of this — you invoke the harness and act on its JSON.
 
 ## How it runs
 
-Execute the bundled harness with `run_terminal_cmd` (replace `<repo>` with this
-repository's absolute path, and pass the user's question, quoted):
+This skill bundles a self-locating launcher at `<skill-dir>/scripts/run.mjs` —
+`<skill-dir>` is this skill's own directory, whose absolute path is announced in
+your system context when the skill loads. Derive the launcher path from that
+announced SKILL.md path and inline the absolute path into a single
+`run_terminal_cmd` call (don't rely on the working directory or a shell variable).
+The launcher locates its bundled harness itself, so no repository path is needed:
 
 ```bash
-node <repo>/workflows/deep-research.mjs "<question>"
+node <skill-dir>/scripts/run.mjs "<question>"
 ```
 
 The harness prints a single JSON object to stdout (progress logs go to stderr):

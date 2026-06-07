@@ -19,13 +19,17 @@ only rules that would have prevented a real, specific mistake survive.
 ## How it runs
 
 This skill delegates to the bundled grok-workflows harness — do NOT re-implement
-the extraction/clustering/verification inline. Run it with `run_terminal_cmd`:
+the extraction/clustering/verification inline. It bundles a self-locating launcher
+at `<skill-dir>/scripts/run.mjs`, where `<skill-dir>` is this skill's own directory
+(its absolute path is announced in your system context). Derive the launcher path
+from that announced SKILL.md path and inline the absolute path into a single
+`run_terminal_cmd` call — don't rely on the working directory or a shell variable:
 
 ```bash
-node <repo>/workflows/rule-mine.mjs "<path to file or dir>"
+node <skill-dir>/scripts/run.mjs "<path to file or dir>"
 ```
 
-(`<repo>` is the checkout of grok-workflows containing `workflows/rule-mine.mjs`.
+(The launcher locates its bundled harness itself, so no repository path is needed.
 Set `GROK_WORKFLOWS_MOCK=1` to dry-run without spending xAI credits.)
 
 The harness prints a JSON object to stdout:

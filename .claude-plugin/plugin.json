@@ -1,0 +1,9 @@
+{
+  "name": "grok-workflows",
+  "version": "0.1.0",
+  "description": "Dynamic multi-agent workflows for Grok Code — fan-out, pipelines, tournaments, adversarial verification, and loop-until-done harnesses, exposed as grok slash-commands. Each skill self-locates its bundled harness, so the plugin works in any directory (git repo or not) with no per-repo install.",
+  "author": { "name": "lswank" },
+  "homepage": "https://github.com/lswank/grok-workflows",
+  "license": "MIT",
+  "keywords": ["grok", "grok-code", "workflows", "multi-agent", "orchestration"]
+}
