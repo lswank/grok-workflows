@@ -26,6 +26,7 @@ import {
   pipeline,
   log,
 } from '../src/engine.mjs'
+import { spawn } from 'node:child_process'
 
 export const meta = {
   name: 'migrate',
@@ -98,7 +99,24 @@ export async function run(input, ctx = {}) {
   const { migration, scope } = parseInput(input)
   if (!migration) throw new Error('migrate: empty migration description')
 
-  const cwd = ctx.cwd
+  const cwd = ctx.cwd || process.cwd()
+
+  // Guard: worktree isolation (used for per-site fixes) requires a git repo.
+  // Without it the grok --worktree children will fail or create confusing state.
+  // Fail fast with an actionable message rather than letting a deep agent error
+  // surface later.
+  const isGit = await new Promise((resolve) => {
+    const c = spawn('git', ['rev-parse', '--is-inside-work-tree'], { cwd, stdio: 'ignore' })
+    c.on('close', (code) => resolve(code === 0))
+    c.on('error', () => resolve(false))
+  })
+  if (!isGit) {
+    throw new Error(
+      'migrate requires the target directory to be a git repository (worktree isolation is used for concurrent edits). ' +
+        'Run from within a git repo, or cd into one. (The scout is read-only and could run anywhere, but the fix stage cannot.)'
+    )
+  }
+
   const scopeNote = scope
     ? `Scope the work to: ${scope}`
     : 'No explicit scope was given; search the whole project.'

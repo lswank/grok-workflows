@@ -14,6 +14,7 @@
 // match), tournament(), and schema-constrained grader agents.
 
 import { agent, parallel, tournament, log } from '../src/engine.mjs'
+import { spawn } from 'node:child_process'
 
 export const meta = {
   name: 'eval-skill',
@@ -202,6 +203,22 @@ export async function run(input, ctx = {}) {
   const { task, rubric, n } = parseInput(input)
   if (!task) {
     throw new Error('No task provided. Usage: eval-skill "<task to run N ways> [-- N] [:: rubric]"')
+  }
+
+  const cwd = ctx.cwd || process.cwd()
+
+  // Guard: every candidate runs with isolation:'worktree'. This only works (and is
+  // only safe) when cwd is inside a git repo. Fail fast with a clear message.
+  const isGit = await new Promise((resolve) => {
+    const c = spawn('git', ['rev-parse', '--is-inside-work-tree'], { cwd, stdio: 'ignore' })
+    c.on('close', (code) => resolve(code === 0))
+    c.on('error', () => resolve(false))
+  })
+  if (!isGit) {
+    throw new Error(
+      'eval-skill requires the target directory to be a git repository (each candidate runs in an isolated git worktree). ' +
+        'Run from within a git repo, or cd into one.'
+    )
   }
 
   log(`eval-skill: running task ${n} ways in isolated worktrees`)
