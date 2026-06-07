@@ -396,3 +396,43 @@ test('_extractJson skips a malformed leading span for a later valid one', () => 
   // A balanced-but-invalid object first, a valid array second.
   assert.deepEqual(_extractJson('prefix {not json} suffix [1,2]'), [1, 2])
 })
+
+// --- additional _extractJson coverage for LLM-like output (template lits,
+//     comments, inner braces in strings, mixed quotes, leading prose, deep nests)
+test('_extractJson handles JSON inside template literals (backticks) as first span', () => {
+  // Opener inside `...` appears first in text; its balanced span parses, so extracted.
+  assert.deepEqual(_extractJson('prose ` { "nested": 1 } ` and later'), { nested: 1 })
+})
+
+test('_extractJson skips JSON-like in // comments when the span does not parse as valid JSON', () => {
+  // { unquotedkey: inside comment produces invalid JSON span (unquoted key); skipped for later valid.
+  assert.deepEqual(_extractJson('// comment with { unquoted: [1,2] }\n{"real": true}'), { real: true })
+})
+
+test('_extractJson correctly handles { [ inside JSON string values (inStr/esc protection)', () => {
+  // In-string { [ must not affect depth; the outer object must balance and parse.
+  assert.deepEqual(
+    _extractJson('{"msg": "contains { and [ literally", "ok":1}'),
+    { msg: 'contains { and [ literally', ok: 1 }
+  )
+})
+
+test('_extractJson handles mix of backticks and double-quotes', () => {
+  // Backtick prose before a real object; inner " with ` inside string is protected.
+  assert.deepEqual(_extractJson('`code` {"a": "has ` backtick inside string"}'), { a: 'has ` backtick inside string' })
+})
+
+test('_extractJson prefers later valid JSON when backtick prose has opener that does not close to a prior valid value', () => {
+  // The { inside the unclosed-looking backtick template does not produce a yielding complete span before the real JSON.
+  assert.deepEqual(_extractJson('see `template with { "incomplete" ` then real: {"b":2}'), { b: 2 })
+})
+
+test('_extractJson extracts deeply nested array/object structures that balance correctly', () => {
+  const deep = '{"a":{"b":[{"c": [1, {"d": {"e":3}}]}]}}'
+  assert.deepEqual(_extractJson('wrapped: ' + deep + ' end'), JSON.parse(deep))
+})
+
+test('_extractJson ignores single-quote chars (they are not string delimiters for balancing)', () => {
+  // ' chars do not flip inStr; a later valid double-quoted JSON wins.
+  assert.deepEqual(_extractJson("it's {'not': 'json'} but {\"yes\":1}"), { yes: 1 })
+})
