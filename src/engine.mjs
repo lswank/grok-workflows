@@ -63,6 +63,16 @@ export const config = {
 
 let _totalAgents = 0
 
+// Per-label last error from agent() giveups (for harnesses to surface actionable
+// diagnostics in their result JSON when generators/claims/etc fail permanently).
+// Consumed by getLastAgentError(). Cleared on success or retrieval.
+const _agentFailureErrors = new Map()
+
+// Track pipeline (and parallel) drop errors so harnesses can include details for
+// actual dropped-to-null items (beyond just agent() nulls). Cleared on retrieval.
+const _pipelineDropErrors = []
+const _parallelTaskErrors = []
+
 function isCapError(err) {
   return !!(err && /cap reached/i.test(String(err.message || err)))
 }
@@ -178,9 +188,11 @@ async function _runAgentWithRetries(prompt, opts, label) {
         // or globally (config.strictSchema). A violation throws → retries → null.
         if (opts.strictSchema ?? config.strictSchema) _validateDeep(parsed, opts.schema)
         else _validateShape(parsed, opts.schema)
+        _agentFailureErrors.delete(label)
         log(`done   ${tag}`)
         return parsed
       }
+      _agentFailureErrors.delete(label)
       log(`done   ${tag}`)
       return text
     } catch (err) {
@@ -188,7 +200,9 @@ async function _runAgentWithRetries(prompt, opts, label) {
       log(`fail   ${tag}: ${err.message}`)
     }
   }
-  log(`giveup ${label}: ${lastErr?.message || 'unknown error'}`)
+  const errMsg = lastErr?.message || 'unknown error'
+  _agentFailureErrors.set(label, errMsg)
+  log(`giveup ${label}: ${errMsg}`)
   return null
 }
 
@@ -526,6 +540,7 @@ export async function parallel(thunks) {
         .catch((err) => {
           if (isCapError(err)) throw err
           log(`parallel task failed: ${err.message}`)
+          _parallelTaskErrors.push(err.message)
           return null
         })
     )
@@ -556,6 +571,7 @@ export async function pipeline(items, ...stages) {
         } catch (err) {
           if (isCapError(err)) throw err
           log(`pipeline item ${index} failed at a stage: ${err.message}`)
+          _pipelineDropErrors.push({ index, message: err.message })
           return null
         }
       }
@@ -912,4 +928,38 @@ function _mockSchemaObject(prompt) {
 /** Total agent() calls made so far this process (for budgeting/inspection). */
 export function totalAgents() {
   return _totalAgents
+}
+
+/**
+ * Retrieve and consume the last error message recorded for a failed agent() by its `label`
+ * (from opts.label or the truncated prompt). Returns undefined if no recorded failure for that label.
+ * Harnesses use this (post-parallel/pipeline of labeled agents) to attach actionable
+ * per-item error strings (e.g. "grok exited 1: ...", "no JSON...", schema errors) into
+ * the result JSON instead of only counts + transient stderr.
+ */
+export function getLastAgentError(label) {
+  if (!label) return undefined
+  const msg = _agentFailureErrors.get(label)
+  if (msg !== undefined) {
+    _agentFailureErrors.delete(label)
+    return msg
+  }
+  return undefined
+}
+
+/**
+ * Consume and return any pipeline drop errors recorded since last call (array of {index, message}).
+ * Used by harnesses like deep-verify to surface details for items that hit the pipeline catch
+ * (actual throws in a stage, leading to null in results array).
+ */
+export function getAndClearPipelineDropErrors() {
+  return _pipelineDropErrors.splice(0)
+}
+
+/**
+ * Consume and return any parallel task error messages recorded since last call.
+ * (Complements agent label errors, for cases where a thunk itself threw.)
+ */
+export function getAndClearParallelTaskErrors() {
+  return _parallelTaskErrors.splice(0)
 }

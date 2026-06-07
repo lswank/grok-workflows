@@ -63,9 +63,29 @@ The harness prints a single JSON object to stdout (progress logs go to stderr):
     }
   ],
   "rejected": [{ "claim": "...", "survives": false, "confidence": 0.0, "...": "..." }],
-  "rounds": 1
+  "rounds": 1,
+  "generatorFailures": 0
 }
 ```
+
+When one or more generators fail permanently (e.g. all lanes hit tool restrictions, spawn errors, or schema validation failures after retries), `generatorFailures > 0` and the new `generatorErrors` array carries the actionable details (populated from the engine's per-label last error; the long "grok exited N: ..." or "no JSON..." strings that used to be only in transient stderr logs):
+
+```json
+{
+  "problem": "...",
+  "surviving": [],
+  "rejected": [],
+  "rounds": 1,
+  "generatorFailures": 3,
+  "generatorErrors": [
+    { "lane": "logs", "error": "grok exited 1: Agent building failed: ... (or full 'no JSON object found...' etc)", "round": 1 },
+    { "lane": "code", "error": "grok exited 1: ...", "round": 1 },
+    { "lane": "data", "error": "...", "round": 1 }
+  ]
+}
+```
+
+All prior fields and counts are unchanged (additive only).
 
 ## What to do with the result
 

@@ -18,6 +18,7 @@ import {
   adversarialVerify,
   loopUntilDone,
   log,
+  getLastAgentError,
 } from '../src/engine.mjs'
 
 export const meta = {
@@ -182,9 +183,18 @@ async function generateRound(problem, evidenceFiles, exclusions, ctx, roundLabel
   )
 
   const dropped = results.length - results.filter(Boolean).length
+  // Collect actionable error details for failed generators (from engine registry).
+  const errors = []
+  SLICES.forEach((slice, i) => {
+    if (!results[i]) {
+      const label = `gen:${slice.id}`
+      const err = getLastAgentError(label) || 'generator agent failed with no detail'
+      errors.push({ lane: slice.id, error: err })
+    }
+  })
   if (dropped > 0) log(`${roundLabel}: ${dropped} generator(s) failed and were dropped`)
 
-  return { hypotheses: collected, failures: dropped }
+  return { hypotheses: collected, failures: dropped, errors }
 }
 
 /** Dedupe by normalized claim, preferring the first occurrence (keeps its slice). */
@@ -275,6 +285,7 @@ export async function run(input, ctx = {}) {
   const rejected = []
   const rejectedClaims = [] // exclusions fed back into later generator rounds
   let generatorFailures = 0 // accumulated across rounds for the final result (diagnostic for total lane failure cases)
+  const generatorErrors = [] // per-failure details (lane + error + round); additive for observability when generatorFailures > 0
 
   // loopUntilDone drives extra rounds ONLY when nothing survived; it stops as
   // soon as a round yields a survivor (done:true), or after maxRounds / dryStreak.
@@ -291,6 +302,12 @@ export async function run(input, ctx = {}) {
         roundLabel
       )
       generatorFailures += roundResult.failures || 0
+      const roundErrs = (roundResult.errors || []).map((e) => ({
+        lane: e.lane,
+        error: e.error,
+        round: rounds,
+      }))
+      generatorErrors.push(...roundErrs)
       const raw = roundResult.hypotheses || []
       const unique = dedupe(raw)
       if (unique.length === 0) {
@@ -341,11 +358,13 @@ export async function run(input, ctx = {}) {
     rejected,
     rounds,
     generatorFailures,
+<<<<<<< ours
     // evidenceFiles + droppedEvidenceFiles now always included (Task 4) so callers/CLI/JSON
     // users observe exactly which after- --  files were accepted vs dropped (previously silent
     // except for easy-to-miss stderr logs). Backward compat for other fields preserved.
     evidenceFiles,
     droppedEvidenceFiles,
+    generatorErrors,
   }
 }
 

@@ -56,6 +56,24 @@ The harness prints a single JSON object to stdout (progress logs go to stderr):
 }
 ```
 
+When investigator or auditor agents (or pipeline stages) fail for claims, the new `claimErrors` array is present with id + stage + the actionable error detail (e.g. the full spawn or "no JSON object found in output" from the engine). Counts and `claims[]` (including synthetic unverifiable entries for failed investigators) are preserved:
+
+```json
+{
+  "total": 2,
+  "supported": 0,
+  "contradicted": 0,
+  "unverifiable": 2,
+  "claims": [ { "id": "c1", "verdict": "unverifiable", "evidence": "Verification agent failed to return a result. no JSON object found in output", ... } ],
+  "claimErrors": [
+    { "id": "c1", "stage": "investigator", "error": "no JSON object found in output" },
+    { "id": "c2", "stage": "auditor", "error": "grok exited 1: ..." }
+  ]
+}
+```
+
+(For actual pipeline drops to null, stage:"pipeline" entries appear.) All prior fields/ counts unchanged; this is additive for when callers only capture the harness stdout JSON.
+
 `claims` is sorted problems-first: `contradicted`, then `unverifiable`
 (including support that was downgraded by the audit), then clean `supported`.
 

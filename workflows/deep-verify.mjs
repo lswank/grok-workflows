@@ -29,7 +29,7 @@
 // we also demonstrate coerceBoolean for post-processing.
 
 import { readFile } from 'node:fs/promises'
-import { agent, pipeline, log, coerceBoolean } from '../src/engine.mjs'
+import { agent, pipeline, log, coerceBoolean, getLastAgentError, getAndClearPipelineDropErrors } from '../src/engine.mjs'
 
 export const meta = {
   name: 'deep-verify',
@@ -221,12 +221,14 @@ export async function run(input, ctx = {}) {
       )
 
       if (!verdict) {
+        const errMsg = getLastAgentError(`verify:${claim.id}`) || 'Verification agent failed to return a result.'
         log(`stage 2: ${claim.id} investigator failed — marking unverifiable`)
+        // Surface the actionable error (full grok err or parse/schema msg) into the per-claim record too.
         return {
           id: claim.id,
           text: claim.text,
           verdict: 'unverifiable',
-          evidence: 'Verification agent failed to return a result.',
+          evidence: `Verification agent failed to return a result. ${errMsg}`,
           source: 'none',
           audited: false,
         }
@@ -284,9 +286,10 @@ export async function run(input, ctx = {}) {
       )
 
       if (!audit) {
+        const errMsg = getLastAgentError(`audit:${res.id}`) || 'audit agent failed'
         // Auditor failed — keep supported but flag that it was unaudited.
         log(`stage 3: ${res.id} auditor failed — keeping supported, unaudited`)
-        return { ...res, audited: false, auditNote: 'audit agent failed' }
+        return { ...res, audited: false, auditNote: `audit agent failed. ${errMsg}` }
       }
 
       // Use coerceBoolean (or the now-guaranteed boolean from strictSchema) + reference the documented pitfalls.
@@ -319,6 +322,43 @@ export async function run(input, ctx = {}) {
   const dropped = results.length - clean.length
   if (dropped > 0) log(`note: ${dropped} claim chain(s) dropped to null (pipeline failure)`)
 
+  // Collect claimErrors for observability: from handled agent fails (investigator/auditor)
+  // which still produce synthetic entries (behavior preserved), plus any actual pipeline-dropped.
+  const claimErrors = []
+  // For the synthetics, we detect via their special evidence/auditNote markers (post the agent-fail paths above).
+  // But since we collected at failure time via getLast inside stages, we need to re-collect here?
+  // Simpler: re-scan the original claims vs results; for agent-fails we enhanced the evidence, but to
+  // populate the top-level list we walk the per-claim results and also the drops.
+  // Since the stage fns above already called getLast (consuming), for the list we use markers + separate drop clear.
+  // To populate list reliably, we'll infer for non-dropped fails from the special strings we set, but
+  // to get precise, we can also have collected during? For this we do post-pass using the synthetic content
+  // (the error is already embedded in evidence/auditNote for the claim item itself).
+  // For top-level claimErrors list (as required), we rebuild from what we have + drops.
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    const orig = claims[i] || { id: `c${i + 1}` }
+    if (r) {
+      if (r.verdict === 'unverifiable' && /Verification agent failed to return a result/.test(r.evidence || '')) {
+        // investigator failure case (error is now in the evidence string too)
+        const errMatch = (r.evidence || '').replace(/^Verification agent failed to return a result\.? ?/, '')
+        claimErrors.push({ id: r.id, stage: 'investigator', error: errMatch || 'investigator agent failed' })
+      } else if (r.auditNote && /audit agent failed/.test(r.auditNote)) {
+        const errMatch = r.auditNote.replace(/^audit agent failed\.? ?/, '')
+        claimErrors.push({ id: r.id, stage: 'auditor', error: errMatch || 'auditor agent failed' })
+      }
+    }
+  }
+  // Now handle actual dropped chains (nulls) + consume the engine's recorded drop errs (may be from stage throws).
+  const dropErrs = getAndClearPipelineDropErrors()
+  for (let i = 0; i < results.length; i++) {
+    if (!results[i]) {
+      const orig = claims[i] || { id: `c${i + 1}` }
+      const match = dropErrs.find((d) => d.index === i)
+      const errMsg = match ? match.message : 'pipeline stage failed (see logs for details)'
+      claimErrors.push({ id: orig.id, stage: 'pipeline', error: errMsg })
+    }
+  }
+
   // Lower = more suspect = sorted first within a verdict group. A claim that was
   // downgraded by the audit (audited && now 'unverifiable') is the most suspect of
   // all, so it must float above claims that were unverifiable from the start —
@@ -344,6 +384,7 @@ export async function run(input, ctx = {}) {
     contradicted: clean.filter((c) => c.verdict === 'contradicted').length,
     unverifiable: clean.filter((c) => c.verdict === 'unverifiable').length,
     claims: clean,
+    claimErrors,
   }
   log(
     `done: ${summary.total} claims — ${summary.supported} supported, ` +

@@ -14,6 +14,7 @@ import { run as triageRun } from '../workflows/triage.mjs'
 import { run as evalRun } from '../workflows/eval-skill.mjs'
 import { run as migrateRun } from '../workflows/migrate.mjs'
 import { run as rootCauseRun } from '../workflows/root-cause.mjs'
+import { run as deepVerifyRun } from '../workflows/deep-verify.mjs'
 import { parseWithSeparator, looksLikeScopeGlob, findLastNumericModifier } from '../src/parse-input.mjs'
 
 function withMock(fn, body) {
@@ -390,4 +391,85 @@ test('root-cause problem after -- uses file-existence (via shared); prose kept w
   )
 
   rmSync(dir, { recursive: true })
+})
+
+// --- root-cause + deep-verify total failure diagnostics (Task 5) ---
+// Force failure paths under MOCK (bad non-JSON triggers agent retries -> giveup null + lastErr).
+// Assert that harness results now carry structured error details (generatorErrors / claimErrors)
+// with actionable messages (e.g. the full 'no JSON...' or spawn err), not just counts.
+// This makes "all generators failed" / dropped chains observable in the JSON artifact.
+
+test('root-cause surfaces generatorErrors with per-lane details (and round) when generators totally fail (not just generatorFailures count)', async () => {
+  await withMock(
+    async (prompt, opts) => {
+      if (opts?.schema && /hypotheses/.test(JSON.stringify(opts.schema || {}))) {
+        // force the exact failure path used by real spawn schema errors too
+        return 'totally not json'
+      }
+      return 'ack'
+    },
+    async () => {
+      const out = await rootCauseRun('the build is broken after deploy', { cwd: process.cwd() })
+      assert.equal(out.generatorFailures, 3, 'count still present')
+      assert.ok(Array.isArray(out.generatorErrors), 'generatorErrors array must be present (additive)')
+      assert.equal(out.generatorErrors.length, 3, 'details for every failed generator')
+      const lanes = out.generatorErrors.map((e) => e.lane).sort()
+      assert.deepEqual(lanes, ['code', 'data', 'logs'])
+      for (const e of out.generatorErrors) {
+        assert.ok(typeof e.round === 'number' && e.round >= 1, 'round reported')
+        assert.ok(e.error && /no JSON object found in output/.test(e.error), `actionable error detail for ${e.lane} was: ${e.error}`)
+      }
+      assert.equal(out.surviving.length, 0)
+      assert.equal(out.rounds, 1) // dry after total gen fail
+    }
+  )
+})
+
+test('deep-verify surfaces claimErrors with id+stage+error details for investigator and auditor failures (not just dropped count); behavior for synthetic claims preserved', async () => {
+  await withMock(
+    async (prompt, opts) => {
+      const label = opts?.label || ''
+      if (label === 'extract-claims') {
+        return JSON.stringify({
+          claims: [
+            { id: 'c1', text: 'The foo function returns true for valid input.' },
+            { id: 'c2', text: 'The bar metric is always 42.' },
+          ],
+        })
+      }
+      if (label === 'verify:c1') {
+        // this one will be 'supported' so it reaches auditor stage
+        return JSON.stringify({ id: 'c1', verdict: 'supported', evidence: 'from code', source: 'foo.js:10' })
+      }
+      if (label === 'verify:c2') {
+        return 'totally not json for investigator'
+      }
+      if (label === 'audit:c1') {
+        return 'totally not json for auditor'
+      }
+      return 'ack'
+    },
+    async () => {
+      const out = await deepVerifyRun('doc text here', { cwd: process.cwd() })
+      // still produces 2 claims in list (synthetics or downgraded), counts preserved
+      assert.equal(out.total, 2)
+      assert.equal(out.supported, 1) // c1 kept as supported even though audit failed (existing behavior)
+      assert.equal(out.unverifiable, 1)
+      assert.ok(Array.isArray(out.claimErrors), 'claimErrors array must be present (additive)')
+      assert.equal(out.claimErrors.length, 2)
+      const byId = Object.fromEntries(out.claimErrors.map((e) => [e.id, e]))
+      assert.equal(byId.c2.stage, 'investigator')
+      assert.ok(/no JSON object found in output|not json for investigator/.test(byId.c2.error), `investigator error: ${byId.c2.error}`)
+      assert.equal(byId.c1.stage, 'auditor')
+      assert.ok(/no JSON object found in output|not json for auditor/.test(byId.c1.error), `auditor error: ${byId.c1.error}`)
+      // the failed-investigator claim is still in claims[] as unverifiable (with its generic + now we can enhance evidence too)
+      const c2 = out.claims.find((c) => c.id === 'c2')
+      assert.equal(c2.verdict, 'unverifiable')
+      assert.ok(/Verification agent failed/.test(c2.evidence))
+      // c1 is supported but unaudited due to auditor fail
+      const c1 = out.claims.find((c) => c.id === 'c1')
+      assert.equal(c1.verdict, 'supported')
+      assert.equal(c1.audited, false)
+    }
+  )
 })
