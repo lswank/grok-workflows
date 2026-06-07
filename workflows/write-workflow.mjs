@@ -97,7 +97,7 @@ export async function run(input, ctx = {}) {
     '   export async function run(input, ctx = {}) { ... return result }',
     '3. At the bottom: import { isMain, cli } from "../src/runner.mjs"',
     '   if (isMain(import.meta.url)) cli(meta, run)',
-    '4. Import ONLY from "../src/engine.mjs" (or "grok-workflows/engine" as fallback). Use the primitives listed above.',
+    '4. Use a ROBUST import for the engine so the saved script works from ~/.grok/workflows (package) and from inside a checkout (relative). Example: try { await import("grok-workflows/engine") } catch { ... relative via fileURLToPath + join ... } or the 3-try pattern in the fallback below. Then destructure { agent, log, ... } from it.',
     "5. The 'input' to run() is the per-invocation argument (a question, a path, a list, etc.). Do NOT hard-code the user's example task inside the script; parameterize on input.",
     '6. Use log() for progress. Return a useful JSON result object.',
     '7. Apply quality patterns from the spec: fresh contexts, adversarial verification where a finding is produced, quarantine for untrusted input, worktree for mutating steps, loopUntilDone for unknown size work.',
@@ -115,9 +115,18 @@ export async function run(input, ctx = {}) {
 
   if (!code || code.length < 200) {
     // Fallback minimal valid script so the user still gets *something* usable.
+    // IMPORTANT: the import must work both for:
+    //  - saved to ~/.grok/workflows (package resolvable after `npm i -g grok-workflows` or via grok's bin env)
+    //  - placed inside a plugin checkout (relative)
     code =
       `// ${wfName} — generated fallback (the code writer returned very little).\n` +
-      `import { agent, log } from '../src/engine.mjs'\n` +
+      `// Robust import: prefer the published package, fall back to relative (for full checkouts).\n` +
+      `let _e;\n` +
+      `try { _e = await import('grok-workflows/engine'); }\n` +
+      `catch { try { const { fileURLToPath } = await import('node:url'); const { dirname, join } = await import('node:path');\n` +
+      `  _e = await import(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'engine.mjs')); }\n` +
+      `catch { _e = await import('../src/engine.mjs'); } }\n` +
+      `const { agent, log } = _e;\n` +
       `import { isMain, cli } from '../src/runner.mjs'\n\n` +
       `export const meta = { name: '${wfName}', description: 'Generated for: ${description.replace(/'/g, '')}', args: '<input>' }\n\n` +
       `export async function run(input, ctx = {}) {\n` +

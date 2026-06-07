@@ -1,5 +1,11 @@
-node_modules/
+# User / project workflow storage (personal scripts + run artifacts)
+.grok/
+.claude/
+
+# OS / editor
 .DS_Store
-*.log
-.build/
-/tmp-*
+*.swp
+*~
+
+# Test / temp artifacts (the test suite itself may create some under /tmp; we ignore the local .grok created by CLI tests)
+node_modules/
