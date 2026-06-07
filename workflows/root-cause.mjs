@@ -11,8 +11,7 @@
 // Runs correctly under GROK_WORKFLOWS_MOCK=1: every agent() call returns a
 // deterministic stand-in, so all object access is defensive.
 
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
+import { parseWithSeparator } from '../src/parse-input.mjs'
 import {
   agent,
   parallel,
@@ -207,50 +206,22 @@ async function panelTest(h, ctx) {
 export async function run(input, ctx = {}) {
   const cwd = ctx.cwd || process.cwd()
 
-  // Parse "<problem> -- file1 file2" into a problem string + evidence file list.
-  // Use the *last* " -- " (greedy backtracking) for the split. However, to avoid
-  // mangling a problem description that happens to contain " -- " or dashes when
-  // the user did not intend an evidence separator, we only accept the split if
-  // *at least one* token after it resolves to an existing file on disk. If the
-  // suffix yields zero valid files, we treat the entire input as the problem
-  // (the " -- " was prose, not a separator). This makes the CLI syntax robust
-  // for natural-language problem statements while still supporting the documented
-  // evidence attachment.
-  const sepMatch = input.match(/^(.*)\s+--\s+(.*)$/)
+  // Parse "<problem> -- file1 file2" using the shared robust parser.
+  // Default is the gold-standard file-existence validation (at least one
+  // resolved token after the last " -- " must exist on disk). This prevents
+  // mangling natural-language problem statements containing " -- " + dash-like
+  // prose. See src/parse-input.mjs for the full history of the prior
+  // inconsistency (bug #2) and the unified implementation.
+  const sepParse = await parseWithSeparator(input, { cwd, log })
   let problem = input
   let evidenceFiles = []
-  if (sepMatch) {
-    const candidateProblem = sepMatch[1].trim()
-    const candidateEvidence = sepMatch[2]
-      .trim()
-      .split(/\s+/)
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .map((p) => (path.isAbsolute(p) ? p : path.resolve(cwd, p)))
-    // Validate which (if any) actually exist.
-    const checked = await parallel(
-      candidateEvidence.map((f) => async () => {
-        try {
-          await fs.access(f)
-          return f
-        } catch {
-          log(`evidence file not found, dropping: ${f}`)
-          return null
-        }
-      })
-    )
-    const validEvidence = checked.filter(Boolean)
-    if (validEvidence.length > 0) {
-      // Accept the split: at least one real evidence file was supplied after --.
-      problem = candidateProblem
-      evidenceFiles = validEvidence
-    } else {
-      // No valid files after the -- ; the token was almost certainly not a
-      // separator (e.g. "sales dropped -- see the Q3 trend"). Keep full input.
-      log('note: -- present in input but no valid evidence files followed it; treating entire string as the problem description')
-      problem = input
-      evidenceFiles = []
-    }
+  if (sepParse.accepted) {
+    problem = sepParse.left
+    evidenceFiles = Array.isArray(sepParse.right) ? sepParse.right : []
+  } else if (sepParse.hadMatch) {
+    log('note: -- present in input but no valid evidence files followed it; treating entire string as the problem description')
+    problem = input
+    evidenceFiles = []
   }
   problem = problem.trim()
   if (!problem) throw new Error('no problem description provided')
