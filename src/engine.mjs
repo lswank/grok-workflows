@@ -63,6 +63,16 @@ export const config = {
 
 let _totalAgents = 0
 
+// Per-label last error from agent() giveups (for harnesses to surface actionable
+// diagnostics in their result JSON when generators/claims/etc fail permanently).
+// Consumed by getLastAgentError(). Cleared on success or retrieval.
+const _agentFailureErrors = new Map()
+
+// Track pipeline (and parallel) drop errors so harnesses can include details for
+// actual dropped-to-null items (beyond just agent() nulls). Cleared on retrieval.
+const _pipelineDropErrors = []
+const _parallelTaskErrors = []
+
 function isCapError(err) {
   return !!(err && /cap reached/i.test(String(err.message || err)))
 }
@@ -178,9 +188,11 @@ async function _runAgentWithRetries(prompt, opts, label) {
         // or globally (config.strictSchema). A violation throws → retries → null.
         if (opts.strictSchema ?? config.strictSchema) _validateDeep(parsed, opts.schema)
         else _validateShape(parsed, opts.schema)
+        _agentFailureErrors.delete(label)
         log(`done   ${tag}`)
         return parsed
       }
+      _agentFailureErrors.delete(label)
       log(`done   ${tag}`)
       return text
     } catch (err) {
@@ -188,7 +200,9 @@ async function _runAgentWithRetries(prompt, opts, label) {
       log(`fail   ${tag}: ${err.message}`)
     }
   }
-  log(`giveup ${label}: ${lastErr?.message || 'unknown error'}`)
+  const errMsg = lastErr?.message || 'unknown error'
+  _agentFailureErrors.set(label, errMsg)
+  log(`giveup ${label}: ${errMsg}`)
   return null
 }
 
@@ -526,6 +540,7 @@ export async function parallel(thunks) {
         .catch((err) => {
           if (isCapError(err)) throw err
           log(`parallel task failed: ${err.message}`)
+          _parallelTaskErrors.push(err.message)
           return null
         })
     )
@@ -556,6 +571,7 @@ export async function pipeline(items, ...stages) {
         } catch (err) {
           if (isCapError(err)) throw err
           log(`pipeline item ${index} failed at a stage: ${err.message}`)
+          _pipelineDropErrors.push({ index, message: err.message })
           return null
         }
       }
@@ -783,14 +799,167 @@ function truncate(s, n) {
 }
 
 function defaultMock(prompt) {
-  // Deterministic stand-in for grok. If a JSON schema instruction is present,
-  // return a tiny object; otherwise echo a short ack. Tests usually override
-  // config.mock with something task-aware.
-  if (/JSON Schema:/.test(prompt)) return JSON.stringify({ mock: true })
+  // Deterministic stand-in for grok. When a JSON schema instruction (appended by
+  // _withSchemaInstruction for agent({schema})) is present, return a minimal
+  // *plausible* object satisfying top-level required keys and common harness
+  // structures (hypotheses, claims, verdict, etc.) so that plain
+  // GROK_WORKFLOWS_MOCK=1 runs of root-cause, deep-verify, migrate, etc.
+  // produce non-empty useful flows for demo/debug/ultracode instead of
+  // immediate dry/zero results. Non-schema path is unchanged (short ack).
+  // Heuristic inspects prompt text (which embeds the schema JSON) for known
+  // field names from bundled harnesses; falls back to required keys or {mock:true}.
+  // Harness regression tests still use their own withMock overrides.
+  if (/JSON Schema:/.test(prompt)) return _mockSchemaObject(prompt)
   return `[mock grok] ${truncate(prompt, 120)}`
+}
+
+/** Cheap heuristic to synthesize a minimal valid-ish response for common
+ * harness schemas when under default mock. Inspects the schema text embedded
+ * in the prompt rather than requiring a full registry or duplicating schemas.
+ */
+function _mockSchemaObject(prompt) {
+  const p = String(prompt || '')
+  // Common harness shapes (from root-cause, deep-verify, migrate, sort-tournament,
+  // eval-skill, adversarialVerify, classifyAndRoute, etc.). Order matters for
+  // overlapping keywords; specific first.
+  if (/"hypotheses"|\bhypotheses\b/i.test(p)) {
+    return JSON.stringify({
+      hypotheses: [
+        { claim: 'mock hypothesis: the issue is caused by X under condition Y', evidence: 'observed in logs slice; matches code path Z' },
+      ],
+    })
+  }
+  if (/"claims"|\bclaims\b/i.test(p)) {
+    return JSON.stringify({
+      claims: [
+        { id: 'c1', text: 'mock extracted claim: component Foo returns bar when baz is set' },
+      ],
+    })
+  }
+  if (/"verdict"|\bverdict\b/i.test(p)) {
+    return JSON.stringify({
+      id: 'c1',
+      verdict: 'supported',
+      evidence: 'mock evidence from source grep and file read',
+      source: 'src/example.js:42 and https://example.com/doc',
+    })
+  }
+  if (/evidenceHolds|\bevidencHolds\b/i.test(p)) {
+    return JSON.stringify({
+      evidenceHolds: true,
+      reason: 'mock audit: evidence holds under default mock for demo flow',
+      quality: 'medium',
+    })
+  }
+  if (/"done"|\bdone\b/i.test(p) && (/"path"|\bpath\b/i.test(p) || /FIX|migration|diff/i.test(p))) {
+    return JSON.stringify({
+      path: 'mock/file.js',
+      summary: 'mock applied the described change',
+      done: true,
+      diff: 'diff --git a/mock/file.js b/mock/file.js\nindex 000..111 100644\n--- a/...\n+++ b/...\n@@ -1 +1 @@\n-mock old\n+mock new',
+    })
+  }
+  if (/"refuted"|\brefuted\b/i.test(p)) {
+    return JSON.stringify({
+      refuted: false,
+      reason: 'mock: could not find concrete refuting evidence under default',
+    })
+  }
+  if (/"label"|\blabel\b/i.test(p) && /classify|route/i.test(p)) {
+    return JSON.stringify({ label: 'default' })
+  }
+  if (/"winner"|\bwinner\b/i.test(p)) {
+    return JSON.stringify({ winner: 'A', reason: 'mock tournament: A wins per comparator heuristic' })
+  }
+  if (/"sites"|\bsites\b/i.test(p)) {
+    return JSON.stringify({
+      sites: [{ path: 'mock/src/target.js', why: 'matches the migration description pattern' }],
+    })
+  }
+  if (/"score"|\bscore\b/i.test(p)) {
+    return JSON.stringify({ candidate: 1, score: 7, justification: 'mock score: satisfies rubric criteria in demo' })
+  }
+  if (/"candidate"|\bcandidate\b/i.test(p) && /approach|summary/i.test(p)) {
+    return JSON.stringify({
+      candidate: 1,
+      approach: 'mock approach',
+      summary: 'mock summary of the changes made in the isolated worktree',
+    })
+  }
+
+  // Graceful fallback for unknown schemas: satisfy top-level required keys
+  // with simple placeholder values (string/num/bool/array as appropriate).
+  // Try to parse a "required": [...] from the embedded schema JSON text.
+  const reqMatch = p.match(/"required"\s*:\s*\[\s*([^\]]+?)\s*\]/)
+  if (reqMatch) {
+    const keys = reqMatch[1]
+      .split(/,\s*/)
+      .map((s) => s.replace(/["']/g, '').trim())
+      .filter(Boolean)
+    const obj = {}
+    for (const k of keys) {
+      if (k === 'hypotheses' || k === 'claims' || k === 'sites' || k === 'votes') {
+        obj[k] = []
+      } else if (k === 'done' || k === 'refuted' || k === 'evidenceHolds' || k === 'approved' || k === 'survives') {
+        obj[k] = true // choose useful true for demo flows
+      } else if (k === 'verdict') {
+        obj[k] = 'unverifiable'
+      } else if (k === 'winner') {
+        obj[k] = 'A'
+      } else if (k === 'label') {
+        obj[k] = 'default'
+      } else if (k === 'score' || k === 'candidate' || k === 'count') {
+        obj[k] = 1
+      } else {
+        obj[k] = `mock ${k}`
+      }
+    }
+    // Ensure common collection keys are non-empty for useful harness runs.
+    if (obj.hypotheses && obj.hypotheses.length === 0) obj.hypotheses = [{ claim: 'mock claim' }]
+    if (obj.claims && obj.claims.length === 0) obj.claims = [{ id: 'c1', text: 'mock text' }]
+    if (obj.sites && obj.sites.length === 0) obj.sites = [{ path: 'f', why: 'm' }]
+    return JSON.stringify(obj)
+  }
+
+  // Last resort (preserves prior tiny mock behavior for unrecognized schemas).
+  return JSON.stringify({ mock: true })
 }
 
 /** Total agent() calls made so far this process (for budgeting/inspection). */
 export function totalAgents() {
   return _totalAgents
+}
+
+/**
+ * Retrieve and consume the last error message recorded for a failed agent() by its `label`
+ * (from opts.label or the truncated prompt). Returns undefined if no recorded failure for that label.
+ * Harnesses use this (post-parallel/pipeline of labeled agents) to attach actionable
+ * per-item error strings (e.g. "grok exited 1: ...", "no JSON...", schema errors) into
+ * the result JSON instead of only counts + transient stderr.
+ */
+export function getLastAgentError(label) {
+  if (!label) return undefined
+  const msg = _agentFailureErrors.get(label)
+  if (msg !== undefined) {
+    _agentFailureErrors.delete(label)
+    return msg
+  }
+  return undefined
+}
+
+/**
+ * Consume and return any pipeline drop errors recorded since last call (array of {index, message}).
+ * Used by harnesses like deep-verify to surface details for items that hit the pipeline catch
+ * (actual throws in a stage, leading to null in results array).
+ */
+export function getAndClearPipelineDropErrors() {
+  return _pipelineDropErrors.splice(0)
+}
+
+/**
+ * Consume and return any parallel task error messages recorded since last call.
+ * (Complements agent label errors, for cases where a thunk itself threw.)
+ */
+export function getAndClearParallelTaskErrors() {
+  return _parallelTaskErrors.splice(0)
 }

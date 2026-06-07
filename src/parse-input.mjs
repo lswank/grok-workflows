@@ -30,6 +30,9 @@
 //
 // No behavior change for previously-valid splits; more cases now robustly
 // treated as prose when no real evidence/scope follows -- .
+// (Task 4 update: the previously-internal dropped tokens are now returned in `dropped`
+// on the result for *all* callers/harnesses, closing the lossy-drop observability gap
+// that was only visible via optional log() to stderr. See JSDoc on parseWithSeparator.)
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -90,12 +93,21 @@ export function findLastNumericModifier(str = '') {
  *   This is stricter than char heuristics and prevents splitting on prose
  *   that merely *looks* path-ish (e.g. "sales dropped -- see Q3 trend" or
  *   "foo -- bar/baz in logs" when those exact paths don't exist).
- * @returns {Promise<{left: string, right: string|any, accepted: boolean, hadMatch: boolean, original: string}>}
+ * @returns {Promise<{left: string, right: string|any, accepted: boolean, hadMatch: boolean, original: string, dropped: string[]}>}
+ *   - `dropped` is always present (as string[]); empty when none rejected or no -- suffix.
+ *     For default (file-existence) validator: contains the *resolved* paths (via path.resolve + cwd)
+ *     that failed fs.access (actionable for the caller). Per-file drop logs still emitted via `log` if provided.
+ *     For custom `looksLike` (e.g. migrate scope globs): on reject (hadMatch && !accepted), contains the
+ *     raw suffix tokens that the callback rejected (whole-suffix decision; no per-token acceptance for globs).
  *   - accepted=true: left is the part before -- , right is the validated value
- *     (string for scope, array for evidence files)
+ *     (string for scope, array for evidence files); dropped holds any invalids that were filtered (mixed case)
  *   - accepted=false && hadMatch=true: a -- was seen but looksLike rejected it
- *     (caller may log "treating as prose"); left===original (full input)
- *   - accepted=false && hadMatch=false: no -- at all; left===original
+ *     (caller may log "treating as prose"); left===original (full input); dropped holds the rejected suffix tokens/paths
+ *   - accepted=false && hadMatch=false: no -- at all; left===original; dropped=[]
+ *
+ * This addition (Task 4) closes the prior lossy-drop observability gap (dropped list was only in stderr logs,
+ * not in public parse result or harness outputs). See callers in root-cause/migrate for propagation.
+ * The core last- --  greedy split + acceptance logic is 100% unchanged from the bug #2 unification.
  */
 export async function parseWithSeparator(input, opts = {}) {
   const raw = String(input || '').trim()
@@ -103,14 +115,19 @@ export async function parseWithSeparator(input, opts = {}) {
 
   const m = raw.match(SEP_REGEX)
   if (!m) {
-    return { left: raw, right: '', accepted: false, hadMatch: false, original: raw }
+    return { left: raw, right: '', accepted: false, hadMatch: false, original: raw, dropped: [] }
   }
 
   const candidateLeft = m[1].trim()
   const candidateRightRaw = m[2].trim()
+  const suffixTokens = candidateRightRaw
+    .split(/\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean)
 
   let accept = false
   let rightValue = candidateRightRaw
+  let dropped = []
 
   if (typeof looksLike === 'function') {
     let decision
@@ -125,15 +142,17 @@ export async function parseWithSeparator(input, opts = {}) {
     } else {
       accept = !!decision
     }
+    if (!accept) {
+      // For looksLike cases (migrate etc.): report the raw suffix tokens that were rejected.
+      // (Custom validator decides on the whole suffix string; globs etc. are accepted/rejected as unit.)
+      dropped = suffixTokens
+    }
   } else {
     // === DEFAULT: gold-standard file-existence validation (root-cause) ===
     // Only accept if >=1 suffix token names a real on-disk file.
     // This is the robust check that was unique to root-cause before unification.
-    const tokens = candidateRightRaw
-      .split(/\s+/)
-      .map((p) => p.trim())
-      .filter(Boolean)
-    const resolvedCandidates = tokens.map((p) =>
+    // invalids are collected into `dropped` (resolved paths) regardless of final accept (for mixed cases).
+    const resolvedCandidates = suffixTokens.map((p) =>
       path.isAbsolute(p) ? p : path.resolve(cwd, p)
     )
     const checked = await Promise.all(
@@ -150,6 +169,7 @@ export async function parseWithSeparator(input, opts = {}) {
       })
     )
     const valid = checked.filter(Boolean)
+    dropped = resolvedCandidates.filter((_, i) => checked[i] === null)
     accept = valid.length > 0
     if (accept) {
       rightValue = valid
@@ -163,6 +183,7 @@ export async function parseWithSeparator(input, opts = {}) {
       accepted: true,
       hadMatch: true,
       original: raw,
+      dropped,
     }
   }
 
@@ -173,6 +194,7 @@ export async function parseWithSeparator(input, opts = {}) {
     accepted: false,
     hadMatch: true,
     original: raw,
+    dropped,
   }
 }
 

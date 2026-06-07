@@ -43,6 +43,8 @@ With evidence files:
 node <skill-dir>/scripts/run.mjs "<problem description> -- /path/to/build.log /path/to/diff.txt"
 ```
 
+**Lane isolation note:** The three disjoint evidence-lane investigators (logs/code/data) are kept apart by prompt instructions (e.g. "STRICTLY restricted to ONE evidence lane... STRICTLY ignore any files, paths... cross lanes, refuse... supportable *only* from your lane's allowed focus") plus `disallowedTools: ['Agent']`. Full technical isolation is not applied because the code lane needs `run_terminal_cmd` to inspect the repo for hypotheses. The problem statement and evidence files are treated as potentially adversarial. See `src/SPEC.md` (rule 9 and the constrain note) for the explicit call-out of this prompt-only tradeoff and the guardrail details. (Cross-ref from the harness implementation.)
+
 The harness prints a single JSON object to stdout (progress logs go to stderr):
 
 ```json
@@ -61,9 +63,29 @@ The harness prints a single JSON object to stdout (progress logs go to stderr):
     }
   ],
   "rejected": [{ "claim": "...", "survives": false, "confidence": 0.0, "...": "..." }],
-  "rounds": 1
+  "rounds": 1,
+  "generatorFailures": 0
 }
 ```
+
+When one or more generators fail permanently (e.g. all lanes hit tool restrictions, spawn errors, or schema validation failures after retries), `generatorFailures > 0` and the new `generatorErrors` array carries the actionable details (populated from the engine's per-label last error; the long "grok exited N: ..." or "no JSON..." strings that used to be only in transient stderr logs):
+
+```json
+{
+  "problem": "...",
+  "surviving": [],
+  "rejected": [],
+  "rounds": 1,
+  "generatorFailures": 3,
+  "generatorErrors": [
+    { "lane": "logs", "error": "grok exited 1: Agent building failed: ... (or full 'no JSON object found...' etc)", "round": 1 },
+    { "lane": "code", "error": "grok exited 1: ...", "round": 1 },
+    { "lane": "data", "error": "...", "round": 1 }
+  ]
+}
+```
+
+All prior fields and counts are unchanged (additive only).
 
 ## What to do with the result
 
@@ -84,3 +106,5 @@ The harness prints a single JSON object to stdout (progress logs go to stderr):
 
 Delegate the orchestration to the harness — do not spawn your own investigator or
 verifier agents.
+
+(See src/SPEC.md for why the "disjoint evidence lanes" isolation is prompt-only rather than using worktree/deny isolation for these agents.)

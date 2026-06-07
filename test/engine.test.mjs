@@ -437,3 +437,297 @@ test('_extractJson ignores single-quote chars (they are not string delimiters fo
   // ' chars do not flip inStr; a later valid double-quoted JSON wins.
   assert.deepEqual(_extractJson("it's {'not': 'json'} but {\"yes\":1}"), { yes: 1 })
 })
+// --- spawn failure truncation behavior (exercises real child process error path) ---
+
+test('agent() preserves full long child stderr on spawn failure (code != 0) without aggressive ~300-char truncate', async () => {
+  // This test forces the *non-mock* spawn path (bypassing GROK_WORKFLOWS_MOCK)
+  // by clearing config.mock and pointing config.bin at /bin/sh.
+  // /bin/sh -p <long-prompt> ... will exit non-zero and put a long "file name"
+  // (our marker simulating real tool/permission errors like "Agent building failed...
+  // auto_backg...") into stderr. (sh treats the -p argument as the script "filename"
+  // for $0/error reporting and emits the full attempted name verbatim in the
+  // "File name too long" / "No such file" stderr diagnostic, even for long args.)
+  // We assert the full detail reaches the logged "fail ..." / "giveup ..." messages
+  // (which is where harnesses and users see it).
+  const prevMock = config.mock
+  const prevBin = config.bin
+  setVerbose(true)
+
+  // Build a long distinctive "error" that exceeds what truncate(..., 300) would keep.
+  // The tail after ~300 chars must survive in the final Error/log for the test to pass.
+  const longMarker =
+    'Agent building failed, please check your config ... tool error: Requirements unsatisfied: [RequirementError { tool: "GrokBuild:run_terminal_cmd", message: "' +
+    'auto_backg'.repeat(35) +
+    'more error context that would be lost at the old 300 limit' +
+    'Z'.repeat(90) +
+    '_TAIL_OF_LONG_ERROR' +
+    '"}]'
+
+  config.mock = null
+  config.bin = '/bin/sh'
+
+  let captured = ''
+  const origWrite = process.stderr.write
+  process.stderr.write = (chunk) => {
+    captured += typeof chunk === 'string' ? chunk : String(chunk)
+    return true
+  }
+
+  let result = null
+  let syncThrown = null
+  try {
+    result = await agent(longMarker, { retries: 0, label: 'trunc-test' })
+  } catch (e) {
+    syncThrown = e
+  } finally {
+    process.stderr.write = origWrite
+    config.mock = prevMock
+    config.bin = prevBin
+    setVerbose(false)
+  }
+
+  // Public contract: permanent failure after retries (here 0) yields null; diagnostics via logs.
+  assert.equal(result, null)
+  assert.equal(syncThrown, null)
+
+  // The "▸ fail ..." and "▸ giveup ..." (with ANSI) must be present and carry the *full* detail.
+  assert.ok(
+    /fail   trunc-test[: ]/.test(captured),
+    'expected "fail   trunc-test:" log line from _runAgentWithRetries'
+  )
+  assert.ok(
+    /giveup trunc-test:/.test(captured),
+    'expected "giveup trunc-test:" log line from _runAgentWithRetries'
+  )
+
+  // Critical: the unique tail that lives past byte ~300 in the child detail must be present.
+  // This fails on current code (truncation hides it) and passes after the fix.
+  assert.ok(
+    captured.includes('_TAIL_OF_LONG_ERROR'),
+    'long child error detail tail must appear verbatim in logged fail/giveup message (no artificial truncation)'
+  )
+
+  // Also assert the fail message line itself is substantially longer than a truncated one would be.
+  const failLineMatch = captured.match(/fail   trunc-test:[^\n]*/)
+  if (failLineMatch) {
+    // Threshold >380 accounts for log prefix ("fail   trunc-test: grok exited N: /bin/sh: " ~35 chars)
+    // + child detail from sh error (~450+ for our marker). Old truncate(300) on detail would
+    // produce an err.message ~<330 chars total, so fail log line <<380; >380 proves full preservation.
+    assert.ok(
+      failLineMatch[0].length > 380,
+      `fail log line should contain untruncated long detail (len=${failLineMatch[0].length})`
+    )
+  }
+
+  // (Removed unreachable `if (syncThrown) { ... }` defensive block here: per agent() contract,
+  // _runAgentWithRetries always catches and returns null on permanent failure; the local catch
+  // only exists for capture safety around the await. syncThrown is asserted null above.)
+})
+
+// --- unparseable output path coverage (exit 0 + long bad stdout, the second error path) ---
+
+test('agent() preserves full long stdout on unparseable output (exit 0, bad JSON) without aggressive ~200-char truncate', async () => {
+  // This exercises the *second* failure path updated in the original fix:
+  // child exits 0 (success for spawn), but stdout is not valid JSON and _extractJson
+  // finds no object (no balanced { or [ spans that parse), so we throw
+  // `unparseable grok output: ${full stdout}` (no longer truncated at 200).
+  // The error reaches the same fail/giveup logs.
+  //
+  // Producer (non-mock, self-contained): /bin/echo always exits 0 and prints its
+  // entire argv to stdout. We pass a long plain-text (no JSON chars) prompt as
+  // the -p value; echo's stdout will contain the full long marker + tail.
+  // _extractJson will fail (no { [ in output), hitting the unparseable path with
+  // the raw long stdout in the Error (and thus the logs).
+  const prevMock = config.mock
+  const prevBin = config.bin
+  setVerbose(true)
+
+  // Long non-JSON payload (plain alphanum + underscores) so extract fails for sure.
+  // Length >> 200 so old truncate(stdout, 200) would drop the tail; full now keeps it.
+  const longMarker = 'notjson' + 'X'.repeat(450) + '_UNPARSE_TAIL_OF_LONG_ERROR'
+
+  config.mock = null
+  config.bin = '/bin/echo'
+
+  let captured = ''
+  const origWrite = process.stderr.write
+  process.stderr.write = (chunk) => {
+    captured += typeof chunk === 'string' ? chunk : String(chunk)
+    return true
+  }
+
+  let result = null
+  let syncThrown = null
+  try {
+    result = await agent(longMarker, { retries: 0, label: 'unparse-test' })
+  } catch (e) {
+    syncThrown = e
+  } finally {
+    process.stderr.write = origWrite
+    config.mock = prevMock
+    config.bin = prevBin
+    setVerbose(false)
+  }
+
+  // Public contract: permanent failure yields null; diagnostics via logs only.
+  assert.equal(result, null)
+  assert.equal(syncThrown, null)
+
+  // fail/giveup logs must be emitted (with the unparseable error containing full stdout).
+  assert.ok(
+    /fail   unparse-test[: ]/.test(captured),
+    'expected "fail   unparse-test:" log line from _runAgentWithRetries for unparseable path'
+  )
+  assert.ok(
+    /giveup unparse-test:/.test(captured),
+    'expected "giveup unparse-test:" log line from _runAgentWithRetries for unparseable path'
+  )
+
+  // Critical assertion for the unparseable path: the tail past the old 200-char limit
+  // on stdout must be present verbatim (would have been cut pre-fix).
+  assert.ok(
+    captured.includes('_UNPARSE_TAIL_OF_LONG_ERROR'),
+    'long unparseable stdout tail must appear verbatim in logged fail/giveup (full stdout preserved, no 200 truncate)'
+  )
+
+  // Length check proves it is not the truncated version.
+  const failLineMatch = captured.match(/fail   unparse-test:[^\n]*/)
+  if (failLineMatch) {
+    // Threshold >500: prefix + "unparseable grok output: -p notjsonXXX..." (~20) + 484-char marker
+    // + " --output-format json --yolo\n" (~30) + ANSI. Old truncate(200) on stdout would keep
+    // err.message < ~230 chars total → fail log line much shorter than 500.
+    assert.ok(
+      failLineMatch[0].length > 500,
+      `fail log line should contain untruncated long stdout detail (len=${failLineMatch[0].length})`
+    )
+  }
+})
+// --- totalAgents / maxTotalAgents cap + reset (TDD for long-lived/multi-run) ---
+
+test('totalAgents() accumulator, cap reached error, and resetTotalAgents() for repeated work', async () => {
+  const prevMax = config.maxTotalAgents
+  const startCount = totalAgents()
+  try {
+    // Drive with a small relative budget so test is isolated from prior suite agents.
+    config.maxTotalAgents = startCount + 2
+
+    await withMock(async () => 'ok', async () => {
+      // Can create up to the relative cap.
+      const a1 = await agent('drive-1')
+      const a2 = await agent('drive-2')
+      assert.ok(a1 && a2)
+      assert.equal(totalAgents(), startCount + 2)
+
+      // Next one must hit the cap (the backstop).
+      await assert.rejects(
+        async () => { await agent('would-exceed') },
+        /agent\(\) cap reached/i
+      )
+      assert.equal(totalAgents(), startCount + 2) // unchanged on the throwing call
+    })
+
+    // With the stub reset (no-op), counter is still high: even "reset" then raising max
+    // temporarily will not let new agents through until real reset impl lowers it.
+    // (This drives the RED failure on the post-reset success part.)
+    resetTotalAgents(startCount)
+
+    config.maxTotalAgents = startCount + 5
+    await withMock(async () => 'ok', async () => {
+      // After "reset", we expect to be able to create more (this will fail under stub).
+      const a3 = await agent('post-reset-3')
+      assert.ok(a3, 'post-reset agent should succeed once counter is actually lowered')
+      assert.equal(totalAgents(), startCount + 1)
+    })
+  } finally {
+    config.maxTotalAgents = prevMax
+    // Leave the suite counter in the state it was before this test (idempotent cleanup).
+    resetTotalAgents(startCount)
+  }
+})
+
+test('true runaway inside one flow (no reset) still hits the cap backstop', async () => {
+  const prevMax = config.maxTotalAgents
+  const startCount = totalAgents()
+  let hit = false
+  try {
+    config.maxTotalAgents = startCount + 3
+    await withMock(async () => 'ok', async () => {
+      // A hot loop of agents without calling reset must still be stopped by the cap.
+      for (let i = 0; i < 10; i++) {
+        try {
+          await agent(`runaway-${i}`)
+        } catch (e) {
+          if (/cap reached/i.test(String(e.message || e))) {
+            hit = true
+            break
+          }
+          throw e
+        }
+      }
+      assert.ok(hit, 'intra-run hot loop of agent() calls without reset must hit cap')
+      // Counter should have stopped at the cap.
+      assert.equal(totalAgents(), startCount + 3)
+    })
+  } finally {
+    config.maxTotalAgents = prevMax
+    resetTotalAgents(startCount)
+  }
+})
+// TDD test for improved defaultMock: exercises the DEFAULT mock (no withMock override)
+// using real harness schemas copied from root-cause / deep-verify. Under current
+// defaultMock this will produce {mock:true} which lacks the required keys/arrays,
+// causing harnesses like root-cause to see 0 hypotheses and dry-run immediately.
+// After the fix, defaultMock will return plausible minimal shapes so plain MOCK=1
+// runs of harnesses produce non-empty demo/debug output.
+test('defaultMock with harness schema returns plausible non-empty shape (hypotheses, claims) — uses global default, no withMock', async () => {
+  // hypothesisSchema from workflows/root-cause.mjs (used by hypothesis generator)
+  const hypothesisSchema = {
+    type: 'object',
+    required: ['hypotheses'],
+    properties: {
+      hypotheses: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['claim'],
+          properties: {
+            claim: { type: 'string' },
+            evidence: { type: 'string' },
+          },
+        },
+      },
+    },
+  }
+
+  // EXTRACT_SCHEMA from workflows/deep-verify.mjs
+  const extractSchema = {
+    type: 'object',
+    required: ['claims'],
+    properties: {
+      claims: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id', 'text'],
+          properties: {
+            id: { type: 'string' },
+            text: { type: 'string' },
+          },
+        },
+      },
+    },
+  }
+
+  // These hit the real defaultMock because no withMock wrapper.
+  const hyp = await agent('generate competing root cause hypotheses', { schema: hypothesisSchema })
+  assert.ok(hyp && typeof hyp === 'object' && !Array.isArray(hyp), 'defaultMock schema path must return object')
+  assert.ok(Array.isArray(hyp.hypotheses), 'must have .hypotheses array (not just {mock:true})')
+  assert.ok(hyp.hypotheses.length >= 1, 'hypotheses array should be non-empty for useful mock')
+  assert.ok(typeof hyp.hypotheses[0]?.claim === 'string' && hyp.hypotheses[0].claim.length > 0, 'each hyp must have a string claim')
+
+  const ext = await agent('extract verifiable claims from the doc', { schema: extractSchema })
+  assert.ok(ext && typeof ext === 'object' && !Array.isArray(ext))
+  assert.ok(Array.isArray(ext.claims), 'must have .claims array')
+  assert.ok(ext.claims.length >= 1, 'claims array should be non-empty for useful mock')
+  assert.ok(typeof ext.claims[0]?.id === 'string' && typeof ext.claims[0]?.text === 'string', 'each claim must have id and text')
+})

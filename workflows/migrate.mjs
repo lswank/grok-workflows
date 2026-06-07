@@ -101,7 +101,7 @@ export async function run(input, ctx = {}) {
   // This removes the local weaker parseInput while unifying on the root-cause
   // gold standard + necessary customization for globs. See src/parse-input.mjs
   // (and its JSDoc) for the full history of the inconsistency (bug #2) and
-  // robustness rationale.
+  // robustness rationale (Task 4: now also surfaces dropped via parse result).
   const parsed = await parseWithSeparator(input, {
     cwd,
     async looksLike(candidateScope, c) {
@@ -121,6 +121,7 @@ export async function run(input, ctx = {}) {
   })
   const migration = parsed.left
   const scope = parsed.accepted && typeof parsed.right === 'string' ? parsed.right : ''
+  const droppedScope = Array.isArray(parsed.dropped) ? parsed.dropped : []
   if (!migration) throw new Error('migrate: empty migration description')
 
   // Guard: worktree isolation (used for per-site fixes) requires a git repo.
@@ -189,6 +190,7 @@ export async function run(input, ctx = {}) {
     return {
       migration,
       scope: scope || null,
+      droppedScope,
       sites: 0,
       fixed: [],
       needsAttention: [],
@@ -363,6 +365,7 @@ export async function run(input, ctx = {}) {
   return {
     migration,
     scope: scope || null,
+    droppedScope,
     sites: sites.length,
     fixed,
     needsAttention,
