@@ -27,6 +27,9 @@ import {
   log,
 } from '../src/engine.mjs'
 import { spawn } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { parseWithSeparator, looksLikeScopeGlob } from '../src/parse-input.mjs'
 
 export const meta = {
   name: 'migrate',
@@ -79,36 +82,46 @@ const REVIEW_SCHEMA = {
   },
 }
 
-// --- helpers -----------------------------------------------------------------
-
-/** Split "<migration> -- <scope>" into { migration, scope }. Use the last " -- " (greedy)
- * so that a migration description containing dashes (or literal " -- ") does not get truncated.
- * Robustness improvement (modeled on the root-cause fix): only accept the split if the
- * suffix "looks like" a plausible scope/glob (contains / . * [ or starts with . or **).
- * Otherwise treat the whole input as the migration description. Prevents subtle
- * truncation when the migration text itself contains " -- " as prose. */
-function parseInput(input) {
-  const raw = String(input || '').trim()
-  const m = raw.match(/^(.*)\s+--\s+(.*)$/)
-  if (!m) return { migration: raw, scope: '' }
-  const candidateMigration = m[1].trim()
-  const candidateScope = m[2].trim()
-  const looksLikeScope = candidateScope.length > 0 &&
-    (/[\/.*[\]]/.test(candidateScope) || candidateScope.startsWith('.') || candidateScope.includes('**'))
-  if (looksLikeScope) {
-    return { migration: candidateMigration, scope: candidateScope }
-  }
-  // The " -- " was likely part of the migration description, not a scope separator.
-  return { migration: raw, scope: '' }
-}
-
 // --- run ---------------------------------------------------------------------
 
 export async function run(input, ctx = {}) {
-  const { migration, scope } = parseInput(input)
-  if (!migration) throw new Error('migrate: empty migration description')
-
   const cwd = ctx.cwd || process.cwd()
+
+  // Split "<migration> -- <scope>" via the shared robust parser.
+  // - Uses greedy last " -- " (same regex shape as before).
+  // - Custom looksLike:
+  //     * if suffix matches the classic glob heuristic ( / . * [ or .start or ** )
+  //       then accept (preserves 100% prior behavior for all documented scope
+  //       cases, including non-literal globs like "src/**/*.js" that wouldn't
+  //       pass a pure file-existence check).
+  //     * else fall back to "does this plain path literally exist?" (allows
+  //       simple dir names without sigils when they are real on disk).
+  // - If the looksLike rejects the suffix (or no -- ), the full input is the
+  //   migration description (prose case).
+  // This removes the local weaker parseInput while unifying on the root-cause
+  // gold standard + necessary customization for globs. See src/parse-input.mjs
+  // (and its JSDoc) for the full history of the inconsistency (bug #2) and
+  // robustness rationale.
+  const parsed = await parseWithSeparator(input, {
+    cwd,
+    async looksLike(candidateScope, c) {
+      if (looksLikeScopeGlob(candidateScope)) {
+        return { accept: true, value: candidateScope }
+      }
+      // Fallback existence for plain (non-glob) names.
+      if (!candidateScope) return false
+      const resolved = path.isAbsolute(candidateScope) ? candidateScope : path.resolve(c, candidateScope)
+      try {
+        await fs.access(resolved)
+        return { accept: true, value: candidateScope }
+      } catch {
+        return false
+      }
+    },
+  })
+  const migration = parsed.left
+  const scope = parsed.accepted && typeof parsed.right === 'string' ? parsed.right : ''
+  if (!migration) throw new Error('migrate: empty migration description')
 
   // Guard: worktree isolation (used for per-site fixes) requires a git repo.
   // Without it the grok --worktree children will fail or create confusing state.
