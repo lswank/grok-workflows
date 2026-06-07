@@ -17,10 +17,27 @@ const pluginRoot = join(skillDir, '..', '..')                    // <plugin>
 const name = basename(skillDir)                                  // e.g. "deep-research"
 const harness = join(pluginRoot, 'workflows', `${name}.mjs`)
 
-spawn(process.execPath, [harness, ...process.argv.slice(2)], { stdio: 'inherit' }).on(
-  'exit',
-  (code, signal) => {
-    if (signal) process.kill(process.pid, signal)
-    else process.exit(code ?? 0)
+const child = spawn(process.execPath, [harness, ...process.argv.slice(2)], { stdio: 'inherit' })
+
+// Forward signals to the harness (and thus to its grok -p children + worktrees) so that
+// aborts / interrupts from the caller (e.g. tool timeout, ^C, or Grok cancelling the run)
+// do not leave orphaned agent processes or git worktrees.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (child && !child.killed) child.kill(sig)
+  })
+}
+
+child.on('error', (err) => {
+  process.stderr.write(`[grok-workflows launcher] failed to start harness: ${err.message}\n`)
+  process.exit(1)
+})
+
+child.on('exit', (code, signal) => {
+  if (signal) {
+    // Re-raise on self so the parent shell/tool sees the correct signal exit status (e.g. 130 for SIGINT).
+    process.kill(process.pid, signal)
+  } else {
+    process.exit(code ?? 0)
   }
-)
+})

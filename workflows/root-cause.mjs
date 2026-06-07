@@ -208,13 +208,15 @@ export async function run(input, ctx = {}) {
   const cwd = ctx.cwd || process.cwd()
 
   // Parse "<problem> -- file1 file2" into a problem string + evidence file list.
-  const sepIdx = input.indexOf(' -- ')
+  // Use the *last* " -- " (greedy) so that a problem description containing early dashes
+  // or " -- " does not truncate the evidence list or mangle the problem text.
+  const sepMatch = input.match(/^(.*)\s+--\s+(.*)$/)
   let problem = input
   let evidenceFiles = []
-  if (sepIdx !== -1) {
-    problem = input.slice(0, sepIdx).trim()
-    evidenceFiles = input
-      .slice(sepIdx + 4)
+  if (sepMatch) {
+    problem = sepMatch[1].trim()
+    evidenceFiles = sepMatch[2]
+      .trim()
       .split(/\s+/)
       .map((p) => p.trim())
       .filter(Boolean)

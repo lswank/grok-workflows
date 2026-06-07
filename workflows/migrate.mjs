@@ -80,14 +80,15 @@ const REVIEW_SCHEMA = {
 
 // --- helpers -----------------------------------------------------------------
 
-/** Split "<migration> -- <scope>" into { migration, scope }. */
+/** Split "<migration> -- <scope>" into { migration, scope }. Use last " -- " so that
+ * a migration description containing dashes (or literal " -- ") does not get truncated. */
 function parseInput(input) {
   const raw = String(input || '').trim()
-  const idx = raw.indexOf(' -- ')
-  if (idx === -1) return { migration: raw, scope: '' }
+  const m = raw.match(/^(.*)\s+--\s+(.*)$/)
+  if (!m) return { migration: raw, scope: '' }
   return {
-    migration: raw.slice(0, idx).trim(),
-    scope: raw.slice(idx + 4).trim(),
+    migration: m[1].trim(),
+    scope: m[2].trim(),
   }
 }
 

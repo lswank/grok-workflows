@@ -49,6 +49,7 @@ const COMPARE_SCHEMA = {
 
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import path from 'node:path'
 
 /**
  * Parse the user's input into { criterion, items, topK }.
@@ -94,11 +95,18 @@ async function parseInput(input, ctx = {}) {
 
 function resolveMaybePath(p, ctx) {
   if (!p) return null
-  if (p.startsWith('/') || p.startsWith('~')) {
-    return p.startsWith('~') ? p.replace(/^~/, process.env.HOME || '~') : p
+  // Expand leading ~ for current user only (~/foo or ~). Other-user ~user/foo is left
+  // as-is (fs will fail, which is fine; we do not support cross-user here).
+  if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+    const home = process.env.HOME || process.env.USERPROFILE || ''
+    const rest = p.slice(1).replace(/^[/\\]/, '')
+    return home ? path.join(home, rest) : p
   }
-  // Relative to ctx.cwd if given.
-  if (ctx?.cwd) return `${ctx.cwd.replace(/\/$/, '')}/${p}`
+  if (p.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(p)) {
+    return p
+  }
+  // Relative to ctx.cwd if given (use path.join for .., cross-platform separators, etc).
+  if (ctx?.cwd) return path.join(ctx.cwd, p)
   return p
 }
 

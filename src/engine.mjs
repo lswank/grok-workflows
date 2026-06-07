@@ -231,7 +231,7 @@ async function _runOneAgent(prompt, opts) {
 
 /** Translate opts into grok CLI arguments. */
 function _buildArgs(prompt, opts) {
-  const args = ['-p', prompt, '--output-format', 'json', '--yolo', '--no-auto-update']
+  const args = ['-p', prompt, '--output-format', 'json', '--yolo']
   const model = opts.model ?? config.defaultModel
   if (model) args.push('-m', model)
   if (opts.effort) args.push('--effort', opts.effort)
