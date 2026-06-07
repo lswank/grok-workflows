@@ -49,7 +49,7 @@ bundles the launcher and the result-handling.
 |---|---|---|
 | Research a topic / fact-check from the web, with a sourced report | **deep-research** | `/deep-research <question>` |
 | Fact-check a document or its claims against the codebase/web | **deep-verify** | `/deep-verify <path-or-text>` |
-| Rank / prioritize / sort a list by a fuzzy quality (severity, impact, fit, …) | **sort-tournament** | `/sort-tournament <criterion> :: a \| b \| c` |
+| Rank / prioritize / sort a list by a fuzzy quality (severity, impact, fit, …) | **sort-tournament** | `/sort-tournament <criterion> :: a \| b \| c [top:N]` |
 | Brainstorm options (name / design / approach) and pick the top few | **brainstorm-tournament** | `/brainstorm-tournament <thing> [:: rubric]` |
 | Debug / post-mortem — why did X break, fail, regress, or drop | **root-cause** | `/root-cause <problem> [-- evidence files]` |
 | Classify, dedupe, and route a bug / support backlog | **triage** | `/triage <backlog-file> [:: tracked-file]` |
