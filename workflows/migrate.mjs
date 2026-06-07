@@ -344,8 +344,7 @@ export async function run(input, ctx = {}) {
       'Worktrees are LEFT IN PLACE for review — nothing was merged.'
   )
   log(
-    'Review each worktree diff (e.g. `git worktree list`, then inspect/merge or ' +
-      'discard) before applying.'
+    'Review each worktree diff (e.g. `git worktree list`); after review run `git worktree prune` to clean up.'
   )
 
   return {
@@ -357,8 +356,9 @@ export async function run(input, ctx = {}) {
     dropped,
     merged: false,
     note:
-      'Edits were made in isolated git worktrees and were NOT merged. Review ' +
-      'each worktree diff (`git worktree list`) and merge or discard manually. ' +
+      'Edits were made in isolated git worktrees and were NOT merged. ' +
+      'Review each worktree diff with `git worktree list` and merge or discard manually. ' +
+      'After review, run `git worktree prune` to clean up. ' +
       'Sites in needsAttention failed review or were incomplete.',
   }
 }
