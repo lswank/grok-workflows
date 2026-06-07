@@ -227,7 +227,7 @@ test('migrate -- scope separator: glob accepted (even non-file), plain non-exist
       // prose with no-glob-char suffix that doesn't exist as file: no split
       out = await migrateRun('fix the thing where x -- y syntax appears', { cwd: process.cwd() })
       assert.ok(out.migration.includes('x -- y syntax'))
-      assert.equal(out.scope, '')
+      assert.equal(out.scope, null)
 
       // using a real existing plain-ish target as scope (the file we created; .txt triggers heuristic too but ok)
       // to purely hit fallback we'd need a name w/o . but for test the glob heuristic path is covered;
