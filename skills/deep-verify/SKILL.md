@@ -66,6 +66,8 @@ pitfalls & recommended patterns". The counts and "downgraded by audit" findings
 are therefore not vulnerable to the engine's default lenient (top-level-only)
 validation.
 
+**Per-claim isolation note (in "How it runs"):** Fresh context per claim + disallowedTools:['Agent'] + prompt guards keep investigators/auditors from crossing claims (the per-claim analogue of root-cause's disjoint lanes). Full technical isolation isn't used because investigators need terminal/web access to verify against the repo or web; the document text is treated as potentially adversarial. See src/SPEC.md (esp. the new rule under "Constrain untrusted-content agents" and rule 9) for the explicit documentation of this prompt-only design choice and the repeated guard language ("STRICTLY restricted to this single claim only... STRICTLY ignore any files, paths... cross claims, refuse... supportable *only* from this claim...").
+
 ## What to do with the result
 
 1. Parse the JSON from stdout.
@@ -84,3 +86,5 @@ validation.
 
 Do not drop the `evidence`/`source`/`auditNote` fields — the point of this skill
 is showing the user *why* each claim holds or fails, not just a verdict.
+
+(See src/SPEC.md for the prompt-only nature of per-claim isolation in this harness — cross-referenced from the "How it runs" section above.)

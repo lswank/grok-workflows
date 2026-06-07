@@ -73,9 +73,9 @@ Each harness prints a JSON result to **stdout**; progress narration goes to
 | Harness | What it does | Core pattern |
 |---|---|---|
 | **deep-research** | Fan out web searches, fetch sources, adversarially verify each claim, synthesize a cited report. | fan-out + verify |
-| **deep-verify** | Extract every factual/technical claim from a doc and verify each against the codebase and/or web. | fan-out + adversarial verify |
+| **deep-verify** | Extract every factual/technical claim from a doc and verify each against the codebase and/or web. (Per-claim investigator/auditor isolation is prompt-only + disallowedTools:['Agent']; see src/SPEC.md for the documented tradeoff.) | fan-out + adversarial verify |
 | **sort-tournament** | Rank a list by a qualitative criterion via pairwise comparison (beats absolute scoring). | tournament |
-| **root-cause** | Generate competing hypotheses from *disjoint* evidence, test each against a panel until one survives. | multi-hypothesis + loop-until-done |
+| **root-cause** | Generate competing hypotheses from *disjoint* evidence, test each against a panel until one survives. (Lane isolation between the 3 evidence slices is prompt-only + disallowedTools:['Agent']; code lane needs repo reads via shell — see src/SPEC.md for the explicit assumption + guardrails.) | multi-hypothesis + loop-until-done |
 | **triage** | Classify each backlog item, dedupe against what's tracked, route to fix or escalation (with quarantine). | classify-and-act |
 | **migrate** | Discover change sites, fix each in an isolated worktree, adversarially review, report. | fan-out + worktree isolation |
 | **rule-mine** | Mine recurring corrections from past sessions/reviews, cluster, verify, distill into `AGENTS.md` rules. | generate-and-filter |
