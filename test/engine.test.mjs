@@ -17,6 +17,9 @@ import {
   _extractJson,
   _validateDeep,
   config,
+  setVerbose,
+  totalAgents,
+  resetTotalAgents,
 } from '../src/engine.mjs'
 
 // Helper: install a task-aware mock for the duration of a test.

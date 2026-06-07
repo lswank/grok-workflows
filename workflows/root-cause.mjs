@@ -358,7 +358,6 @@ export async function run(input, ctx = {}) {
     rejected,
     rounds,
     generatorFailures,
-<<<<<<< ours
     // evidenceFiles + droppedEvidenceFiles now always included (Task 4) so callers/CLI/JSON
     // users observe exactly which after- --  files were accepted vs dropped (previously silent
     // except for easy-to-miss stderr logs). Backward compat for other fields preserved.
