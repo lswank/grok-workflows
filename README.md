@@ -171,6 +171,21 @@ const results = await pipeline(
 const verdicts = await parallel(claims.map((c) => () => adversarialVerify(c.text)))
 ```
 
+> **Important:** when you pass `schema` to `agent()`, remember the engine's default
+> validation is *lenient* (see SPEC pitfalls section linked from the primitives table).
+> Always guard bool/enum results from schemas:
+> ```js
+> // BAD (foot-gun):
+> if (fix.done) { reviewIt(); }   // "false" string is truthy!
+>
+> // GOOD:
+> import { coerceBoolean } from '../src/engine.mjs';
+> if (coerceBoolean(fix?.done) !== true) { flagIncomplete(fix); return; }
+> // or use strictSchema: true on the call when you want retries instead of coerce
+> const fix = await agent(..., { schema: FIX_SCHEMA, strictSchema: true });
+> ```
+> (Copy patterns from `migrate.mjs` / `sort-tournament.mjs` / `deep-verify.mjs`.)
+
 ### The primitives
 
 | Function | Shape | Use it for |
@@ -190,9 +205,21 @@ const verdicts = await parallel(claims.map((c) => () => adversarialVerify(c.text
 `['run_terminal_cmd']` to quarantine untrusted-content agents), `maxTurns`,
 `rules`, `allow` / `deny`, `disableWebSearch`, `strictSchema` (enforce the full
 schema — nested types, enums, array items — instead of just top-level keys), and
-more. See
-[`src/SPEC.md`](./src/SPEC.md) for the full authoring contract, and
+more (including the `coerceBoolean` helper for post-processing). See
+[`src/SPEC.md`](./src/SPEC.md) for the full authoring contract (and the critical
+"Schema validation pitfalls & recommended patterns" subsection), and
 [`src/engine.mjs`](./src/engine.mjs) for the JSDoc on every function.
+
+> **⚠️ Schema validation is lenient by default (top-level `required` + kind only).**
+> LLMs often emit the *string* `"false"` / `"0"` / wrong enum values for declared
+> booleans and enums (and drop nested objects). A bare `if (x.done)` or `result.winner`
+> is a silent foot-gun.
+> - Always: `x.done === true`, `x.winner === 'A'`, or `coerceBoolean(x.done)`.
+> - Or pass `strictSchema: true` (or set `GROK_WORKFLOWS_STRICT_SCHEMA=1`) when
+>   exactness + retries are acceptable.
+> - See the good/bad patterns and `asObject` tolerance examples in
+>   [`src/SPEC.md#schema-validation-pitfalls--recommended-patterns`](./src/SPEC.md).
+> Existing harnesses already defend this way (see their comments).
 
 A workflow file exports `meta` and `run(input, ctx)` and ends with a small CLI
 tail so it runs standalone — copy any file in [`workflows/`](./workflows) as a
@@ -214,7 +241,7 @@ All via environment variables (or mutate the exported `config` object):
 | `GROK_WORKFLOWS_MAX_AGENTS` | `1000` (clamped >=1) | runaway-loop backstop |
 | `GROK_WORKFLOWS_QUIET` | unset | `1` silences progress narration |
 | `GROK_WORKFLOWS_MOCK` | unset | `1` stubs every agent (no grok spawned) |
-| `GROK_WORKFLOWS_STRICT_SCHEMA` | unset | `1` enables deep/nested schema validation (type, enum, items, nested required) instead of lenient top-level only |
+| `GROK_WORKFLOWS_STRICT_SCHEMA` | unset | `1` enables deep/nested schema validation (type, enum, items, nested required) instead of lenient top-level only. **Default is intentionally lenient** — see the "Schema validation pitfalls & recommended patterns" subsection in [`src/SPEC.md`](./src/SPEC.md) and use `coerceBoolean` / `=== true` guards (or this flag) for bool/enum control fields. |
 
 ---
 
