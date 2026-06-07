@@ -232,7 +232,7 @@ test('migrate -- scope separator: glob accepted (even non-file), plain non-exist
       // using a real existing plain-ish target as scope (the file we created; .txt triggers heuristic too but ok)
       // to purely hit fallback we'd need a name w/o . but for test the glob heuristic path is covered;
       // the important: valid split still happens, and prose no-split covered above.
-      out = await migrateRun(`mig foo -- ${realScopeTarget}`, { cwd: dir })
+      out = await migrateRun(`mig foo -- ${realScopeTarget}`, { cwd: process.cwd() })
       assert.equal(out.migration, 'mig foo')
       assert.ok(out.scope && out.scope.includes('realscope.txt'))
     }
