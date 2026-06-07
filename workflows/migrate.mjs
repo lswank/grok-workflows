@@ -81,16 +81,25 @@ const REVIEW_SCHEMA = {
 
 // --- helpers -----------------------------------------------------------------
 
-/** Split "<migration> -- <scope>" into { migration, scope }. Use last " -- " so that
- * a migration description containing dashes (or literal " -- ") does not get truncated. */
+/** Split "<migration> -- <scope>" into { migration, scope }. Use the last " -- " (greedy)
+ * so that a migration description containing dashes (or literal " -- ") does not get truncated.
+ * Robustness improvement (modeled on the root-cause fix): only accept the split if the
+ * suffix "looks like" a plausible scope/glob (contains / . * [ or starts with . or **).
+ * Otherwise treat the whole input as the migration description. Prevents subtle
+ * truncation when the migration text itself contains " -- " as prose. */
 function parseInput(input) {
   const raw = String(input || '').trim()
   const m = raw.match(/^(.*)\s+--\s+(.*)$/)
   if (!m) return { migration: raw, scope: '' }
-  return {
-    migration: m[1].trim(),
-    scope: m[2].trim(),
+  const candidateMigration = m[1].trim()
+  const candidateScope = m[2].trim()
+  const looksLikeScope = candidateScope.length > 0 &&
+    (/[\/.*[\]]/.test(candidateScope) || candidateScope.startsWith('.') || candidateScope.includes('**'))
+  if (looksLikeScope) {
+    return { migration: candidateMigration, scope: candidateScope }
   }
+  // The " -- " was likely part of the migration description, not a scope separator.
+  return { migration: raw, scope: '' }
 }
 
 // --- run ---------------------------------------------------------------------
