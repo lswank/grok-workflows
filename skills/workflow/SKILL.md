@@ -2,18 +2,18 @@
 name: workflow
 description: >
   Umbrella entry point for the grok-workflows multi-agent engine. Routes a task to
-  the best-fit bundled harness, which spawns multiple headless grok subprocesses
-  (real `grok -p` instances on your account, each its own fresh context) to defeat
-  agentic laziness, self-preferential bias, and goal drift. Use when the user types
-  "/workflow", says "ultracode", or asks to run a task as a multi-agent workflow,
-  orchestrate it with parallel grok subagents/subprocesses, fan it out, or "run the
-  grok-workflows engine".
+  the best-fit bundled harness (or writes a brand new one on the fly), which spawns
+  multiple headless grok subprocesses (real `grok -p` instances on your account, each
+  its own fresh context) to defeat agentic laziness, self-preferential bias, and goal
+  drift. Use when the user types "/workflow", says "ultracode", asks for /goal or /loop,
+  or asks to run a task as a multi-agent workflow / orchestrate at scale.
 when-to-use: >
   Triggers: "/workflow <task>", "ultracode <task>", "run this as a workflow", "use
   the grok-workflows engine", "spawn grok subagents for this", "fan this out",
-  "multi-agent orchestrate this". Also use when a request clearly matches one of the
-  bundled harnesses (deep research, ranking, root-cause, triage, migration, etc.)
-  and the user wants it run as a real multi-agent job rather than answered inline.
+  "multi-agent orchestrate this", "/goal ...", "/loop ...", "write a workflow for",
+  "create a custom harness that". Also use when a request clearly matches one of the
+  bundled harnesses (deep research, ranking, root-cause, triage, migration, goal, loop,
+  etc.) and the user wants it run as a real multi-agent job rather than answered inline.
 metadata:
   short-description: "Route a task to the right grok-workflows harness (spawns real grok subprocesses)"
 ---
@@ -33,6 +33,10 @@ launcher) and the result-handling.
 
 ## Usage
 `/workflow <your task>` — or just say `ultracode <your task>`.
+You can also invoke the first-class extensions directly:
+`/loop 10m triage ./queue.txt`
+`/goal all high-severity items are either fixed or escalated with notes :: triage ./queue.txt`
+`/write-workflow a custom 3-reviewer + tournament + goal-check harness for design proposals`
 
 ## How to route
 
@@ -57,6 +61,9 @@ launcher) and the result-handling.
 | Make a mechanical change across many files (rename, swap a lib, …) | **migrate** | `/migrate <change> [-- scope]` |
 | Mine past sessions / reviews into AGENTS.md / CLAUDE.md rules | **rule-mine** | `/rule-mine <file-or-dir>` |
 | Run a task N independent ways and grade to pick the best | **eval-skill** | `/eval-skill <task> [-- N] [:: rubric]` |
+| Run a workflow repeatedly on an interval (triage every 10m, status every hour, …) | **loop** | `/loop <interval> <sub-workflow-or-task> [--max N]` |
+| Keep repeating work until a hard, explicit criterion is met (defeats "done" laziness) | **goal** | `/goal <criterion> :: <inner-task-or-workflow>` |
+| Have Claude write a brand-new reusable orchestration script for a novel process and save it | **write-workflow** (or ultracode + creative ask) | `/write-workflow <description of the desired orchestration>` |
 
 ## Notes
 
