@@ -210,9 +210,16 @@ async function _runOneAgent(prompt, opts) {
   if (code !== 0) {
     // grok reports real errors on stderr; fall back to stdout only if stderr is
     // empty. Surfacing stderr makes a failed spawn actually debuggable.
+    //
+    // IMPORTANT: do NOT truncate the child detail for error cases (unlike short
+    // labels/prompts elsewhere). Long tool/permission/runtime errors (e.g.
+    // "Agent building failed... auto_backg… RequirementError lists") must be
+    // fully preserved so they appear intact in the "▸ fail ..." and
+    // "▸ giveup ..." log lines that are the only diagnostics available to
+    // callers and harnesses when agent() ultimately returns null.
     const detail = (stderr && stderr.trim()) || (stdout && stdout.trim()) || '(no output)'
     throw new Error(
-      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${truncate(detail, 300)}`
+      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${detail}`
     )
   }
   // --output-format json => a single JSON object: {text, stopReason, sessionId, requestId}
@@ -221,8 +228,11 @@ async function _runOneAgent(prompt, opts) {
     obj = JSON.parse(stdout)
   } catch {
     // If grok ever prints stray lines, salvage the last JSON object on stdout.
+    // This is a failure path for the child (exit 0 but unusable output); preserve
+    // the *full* stdout in the Error (no truncate) for the same reason as the
+    // non-zero exit case: diagnostics must not be lost when retries give up.
     obj = _extractJson(stdout)
-    if (obj === undefined) throw new Error(`unparseable grok output: ${truncate(stdout, 200)}`)
+    if (obj === undefined) throw new Error(`unparseable grok output: ${stdout}`)
   }
   if (obj.stopReason && obj.stopReason !== 'EndTurn' && obj.stopReason !== 'end_turn') {
     log(`note   stopReason=${obj.stopReason}`)
