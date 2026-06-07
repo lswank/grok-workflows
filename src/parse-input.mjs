@@ -74,6 +74,10 @@ export function findLastNumericModifier(str = '') {
  * @param {string} input
  * @param {object} [opts]
  * @param {string} [opts.cwd=process.cwd()] - base for resolving relative paths
+ * @param {function} [opts.log] - optional logger fn(str) used by default
+ *   file-existence validator to emit the per-file "evidence file not found,
+ *   dropping: ..." diagnostics (exactly as root-cause used to, for identical
+ *   observable behavior).
  * @param {function} [opts.looksLike] - async (suffix: string, cwd: string) =>
  *   boolean | { accept: boolean, value?: any }
  *   If omitted, uses the gold-standard file-existence validator (root-cause):
@@ -82,6 +86,7 @@ export function findLastNumericModifier(str = '') {
  *     - accepts split IFF at least one token is an existing file/dir on disk
  *     - when accepted, `right` in result is the array of *valid resolved* paths
  *       (invalids are dropped, same as original root-cause)
+ *     - emits drop logs via opts.log if provided
  *   This is stricter than char heuristics and prevents splitting on prose
  *   that merely *looks* path-ish (e.g. "sales dropped -- see Q3 trend" or
  *   "foo -- bar/baz in logs" when those exact paths don't exist).
@@ -94,7 +99,7 @@ export function findLastNumericModifier(str = '') {
  */
 export async function parseWithSeparator(input, opts = {}) {
   const raw = String(input || '').trim()
-  const { cwd = process.cwd(), looksLike } = opts
+  const { cwd = process.cwd(), looksLike, log } = opts
 
   const m = raw.match(SEP_REGEX)
   if (!m) {
@@ -137,6 +142,9 @@ export async function parseWithSeparator(input, opts = {}) {
           await fs.access(f)
           return f
         } catch {
+          if (typeof log === 'function') {
+            log(`evidence file not found, dropping: ${f}`)
+          }
           return null
         }
       })
