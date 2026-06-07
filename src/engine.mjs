@@ -226,7 +226,7 @@ async function _runOneAgent(prompt, opts) {
     // empty. Surfacing stderr makes a failed spawn actually debuggable.
     const detail = (stderr && stderr.trim()) || (stdout && stdout.trim()) || '(no output)'
     throw new Error(
-      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${truncate(detail, 300)}`
+      `grok exited ${code}${signal ? ` (signal ${signal})` : ''}: ${detail}`
     )
   }
   // --output-format json => a single JSON object: {text, stopReason, sessionId, requestId}
@@ -236,7 +236,7 @@ async function _runOneAgent(prompt, opts) {
   } catch {
     // If grok ever prints stray lines, salvage the last JSON object on stdout.
     obj = _extractJson(stdout)
-    if (obj === undefined) throw new Error(`unparseable grok output: ${truncate(stdout, 200)}`)
+    if (obj === undefined) throw new Error(`unparseable grok output: ${stdout}`)
   }
   if (obj.stopReason && obj.stopReason !== 'EndTurn' && obj.stopReason !== 'end_turn') {
     log(`note   stopReason=${obj.stopReason}`)
