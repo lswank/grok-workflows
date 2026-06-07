@@ -28,19 +28,31 @@ export const config = {
   defaultModel: process.env.GROK_WORKFLOWS_MODEL || null,
   // Max agents running concurrently. Mirrors Claude Code's min(16, cores-2) cap,
   // but defaults more conservatively so a laptop doesn't melt. Override with
-  // GROK_WORKFLOWS_CONCURRENCY.
-  concurrency: Number(process.env.GROK_WORKFLOWS_CONCURRENCY) ||
-    Math.max(2, Math.min(8, (os.cpus()?.length || 4) - 2)),
-  // Per-agent retry attempts on transient failure / schema-parse failure.
-  retries: Number(process.env.GROK_WORKFLOWS_RETRIES ?? 2),
-  // Per-agent timeout in ms (0 = no timeout).
-  timeoutMs: Number(process.env.GROK_WORKFLOWS_TIMEOUT_MS) || 0,
+  // GROK_WORKFLOWS_CONCURRENCY. Sanitized to >=1.
+  concurrency: (() => {
+    const n = Number(process.env.GROK_WORKFLOWS_CONCURRENCY)
+    const def = Math.max(2, Math.min(8, (os.cpus()?.length || 4) - 2))
+    return Number.isFinite(n) && n >= 1 ? n : def
+  })(),
+  // Per-agent retry attempts on transient failure / schema-parse failure. Sanitized >=0.
+  retries: (() => {
+    const n = Number(process.env.GROK_WORKFLOWS_RETRIES ?? 2)
+    return Number.isFinite(n) && n >= 0 ? n : 2
+  })(),
+  // Per-agent timeout in ms (0 = no timeout). Sanitized >=0.
+  timeoutMs: (() => {
+    const n = Number(process.env.GROK_WORKFLOWS_TIMEOUT_MS)
+    return Number.isFinite(n) && n >= 0 ? n : 0
+  })(),
   // Mock mode: don't spawn grok at all. Set GROK_WORKFLOWS_MOCK=1 for free,
   // deterministic tests, or assign config.mock to a function (prompt, opts) => string.
   mock: process.env.GROK_WORKFLOWS_MOCK === '1' ? defaultMock : null,
   // Hard ceiling on total agent() invocations per process — a runaway-loop
-  // backstop, set far above any real workflow.
-  maxTotalAgents: Number(process.env.GROK_WORKFLOWS_MAX_AGENTS) || 1000,
+  // backstop, set far above any real workflow. Sanitized >=1.
+  maxTotalAgents: (() => {
+    const n = Number(process.env.GROK_WORKFLOWS_MAX_AGENTS)
+    return Number.isFinite(n) && n >= 1 ? n : 1000
+  })(),
   // When true, schema'd agents are validated with the deep validator (nested
   // types, enums, array items) instead of the lightweight top-level check. Can
   // also be set per-call via opts.strictSchema. Off by default to preserve the
@@ -49,6 +61,10 @@ export const config = {
 }
 
 let _totalAgents = 0
+
+function isCapError(err) {
+  return !!(err && /cap reached/i.test(String(err.message || err)))
+}
 
 // ---------------------------------------------------------------------------
 // Concurrency limiter (a tiny semaphore; no external deps)
@@ -79,8 +95,9 @@ function makeLimiter(max) {
 let _limit = makeLimiter(config.concurrency)
 /** Reset the global concurrency limit (call after changing config.concurrency). */
 export function setConcurrency(n) {
-  config.concurrency = n
-  _limit = makeLimiter(n)
+  const safe = Number.isFinite(n) && n >= 1 ? n : 1
+  config.concurrency = safe
+  _limit = makeLimiter(safe)
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +488,7 @@ export async function parallel(thunks) {
       Promise.resolve()
         .then(fn)
         .catch((err) => {
+          if (isCapError(err)) throw err
           log(`parallel task failed: ${err.message}`)
           return null
         })
@@ -500,6 +518,7 @@ export async function pipeline(items, ...stages) {
         try {
           acc = await stage(acc, item, index)
         } catch (err) {
+          if (isCapError(err)) throw err
           log(`pipeline item ${index} failed at a stage: ${err.message}`)
           return null
         }
@@ -545,12 +564,13 @@ export async function adversarialVerify(claim, opts = {}) {
       agent(buildPrompt(claim, lens), {
         ...opts.agentOpts,
         schema,
+        strictSchema: true, // guarantee boolean `refuted` (lenient would let "false"/"0" etc. through and corrupt majority)
         label: `verify:${typeof lens === 'string' ? lens : `#${lens}`}`,
       })
     )
   )
   const valid = votes.filter(Boolean)
-  const refuted = valid.filter((v) => v.refuted).length
+  const refuted = valid.filter((v) => v.refuted === true).length
   const kept = valid.length - refuted
   return { survives: kept > refuted, refuted, kept, votes: valid }
 }

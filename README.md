@@ -208,12 +208,13 @@ All via environment variables (or mutate the exported `config` object):
 |---|---|---|
 | `GROK_BIN` | `grok` | path to the grok binary |
 | `GROK_WORKFLOWS_MODEL` | (grok default) | default model for agents that don't set one |
-| `GROK_WORKFLOWS_CONCURRENCY` | `min(8, cores−2)` | max agents running at once |
-| `GROK_WORKFLOWS_RETRIES` | `2` | per-agent retries on failure / bad JSON |
+| `GROK_WORKFLOWS_CONCURRENCY` | `min(8, cores−2)` (clamped >=1) | max agents running at once |
+| `GROK_WORKFLOWS_RETRIES` | `2` (clamped >=0) | per-agent retries on failure / bad JSON |
 | `GROK_WORKFLOWS_TIMEOUT_MS` | `0` (off) | per-agent timeout |
-| `GROK_WORKFLOWS_MAX_AGENTS` | `1000` | runaway-loop backstop |
+| `GROK_WORKFLOWS_MAX_AGENTS` | `1000` (clamped >=1) | runaway-loop backstop |
 | `GROK_WORKFLOWS_QUIET` | unset | `1` silences progress narration |
 | `GROK_WORKFLOWS_MOCK` | unset | `1` stubs every agent (no grok spawned) |
+| `GROK_WORKFLOWS_STRICT_SCHEMA` | unset | `1` enables deep/nested schema validation (type, enum, items, nested required) instead of lenient top-level only |
 
 ---
 
@@ -224,7 +225,7 @@ instead of spawning grok — so you can exercise all the orchestration logic for
 free. The test suite runs entirely in this mode:
 
 ```bash
-npm test          # 17 engine tests, no grok required
+npm test          # 35 tests (engine + workflow regressions), no grok required
 ```
 
 For richer harness tests, assign `config.mock` to a task-aware function that
