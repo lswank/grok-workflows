@@ -17,16 +17,42 @@ const pluginRoot = join(skillDir, '..', '..')                    // <plugin>
 const name = basename(skillDir)                                  // e.g. "deep-research"
 const harness = join(pluginRoot, 'workflows', `${name}.mjs`)
 
-const child = spawn(process.execPath, [harness, ...process.argv.slice(2)], { stdio: 'inherit' })
+const child = spawn(process.execPath, [harness, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+  // detached:true gives the harness its own process group (Unix). This lets us
+  // kill the whole tree (-pid) so grok -p children + any in-flight worktrees
+  // started by --worktree also receive the signal. Prevents the orphans that
+  // the previous single child.kill() left behind in many real interrupt cases.
+  detached: process.platform !== 'win32'
+})
 
-// Forward signals to the harness (and thus to its grok -p children + worktrees) so that
-// aborts / interrupts from the caller (e.g. tool timeout, ^C, or Grok cancelling the run)
-// do not leave orphaned agent processes or git worktrees.
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  process.on(sig, () => {
-    if (child && !child.killed) child.kill(sig)
-  })
+/**
+ * Kill the harness child (and, on Unix, its process group). This is the improved
+ * version that addresses the "launcher only kills direct child" hypothesis.
+ * Windows falls back to killing the child process (no portable pgid kill without
+ * extra modules).
+ */
+function killTree(signal) {
+  if (!child || child.killed) return
+  if (process.platform === 'win32' || !child.pid) {
+    try { child.kill(signal) } catch {}
+  } else {
+    try {
+      process.kill(-child.pid, signal)
+    } catch (e) {
+      // group kill failed (not group leader, already exited, permission, etc.)
+      try { child.kill(signal) } catch {}
+    }
+  }
 }
+
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => killTree(sig))
+}
+
+// Best-effort cleanup if the launcher process itself is shutting down for other
+// reasons (e.g. uncaught exception in the parent context).
+process.on('beforeExit', () => killTree('SIGTERM'))
 
 child.on('error', (err) => {
   process.stderr.write(`[grok-workflows launcher] failed to start harness: ${err.message}\n`)

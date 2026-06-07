@@ -160,7 +160,7 @@ async function generateRound(problem, evidenceFiles, exclusions, ctx, roundLabel
   const dropped = results.length - results.filter(Boolean).length
   if (dropped > 0) log(`${roundLabel}: ${dropped} generator(s) failed and were dropped`)
 
-  return collected
+  return { hypotheses: collected, failures: dropped }
 }
 
 /** Dedupe by normalized claim, preferring the first occurrence (keeps its slice). */
@@ -264,6 +264,7 @@ export async function run(input, ctx = {}) {
   let surviving = []
   const rejected = []
   const rejectedClaims = [] // exclusions fed back into later generator rounds
+  let generatorFailures = 0 // accumulated across rounds for the final result (diagnostic for total lane failure cases)
 
   // loopUntilDone drives extra rounds ONLY when nothing survived; it stops as
   // soon as a round yields a survivor (done:true), or after maxRounds / dryStreak.
@@ -272,13 +273,15 @@ export async function run(input, ctx = {}) {
       rounds = round + 1
       const roundLabel = `round ${rounds}`
 
-      const raw = await generateRound(
+      const roundResult = await generateRound(
         problem,
         evidenceFiles,
         rejectedClaims,
         runCtx,
         roundLabel
       )
+      generatorFailures += roundResult.failures || 0
+      const raw = roundResult.hypotheses || []
       const unique = dedupe(raw)
       if (unique.length === 0) {
         // Genuine dry round: generators produced nothing new. Retrying is
@@ -327,6 +330,7 @@ export async function run(input, ctx = {}) {
     surviving, // ranked by panel confidence, highest first
     rejected,
     rounds,
+    generatorFailures,
   }
 }
 
