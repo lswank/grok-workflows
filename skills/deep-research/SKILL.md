@@ -18,12 +18,15 @@ re-implement any of this — you invoke the harness and act on its JSON.
 
 ## How it runs
 
-This skill bundles a self-locating launcher at `<skill-dir>/scripts/run.mjs` —
+This skill bundles an entrypoint at `<skill-dir>/scripts/run.mjs` (thin delegator
+to the centralized launcher logic in `src/launcher.mjs`; self-location still works
+via the passed `import.meta.url` from the delegator) —
 `<skill-dir>` is this skill's own directory, whose absolute path is announced in
-your system context when the skill loads. Derive the launcher path from that
+your system context when the skill loads. Derive the entrypoint path from that
 announced SKILL.md path and inline the absolute path into a single
 `run_terminal_cmd` call (don't rely on the working directory or a shell variable).
-The launcher locates its bundled harness itself, so no repository path is needed:
+The launcher locates its bundled harness itself (via the delegator), so no
+repository path is needed:
 
 ```bash
 node <skill-dir>/scripts/run.mjs "<question>"

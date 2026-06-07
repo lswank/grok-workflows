@@ -28,7 +28,8 @@ run on the user's own grok account and spend their credits.
 
 This skill is the front door: it does NOT do the work itself. It picks the single
 best-fit harness for the user's task and hands off to that harness's skill, which
-bundles the launcher and the result-handling.
+provides the `scripts/run.mjs` entrypoint (thin delegator to the centralized
+launcher) and the result-handling.
 
 ## Usage
 `/workflow <your task>` — or just say `ultracode <your task>`.
@@ -64,10 +65,12 @@ bundles the launcher and the result-handling.
   free, deterministic dry run, set `GROK_WORKFLOWS_MOCK=1` in the environment before
   invoking — every grok subprocess is then replaced by a stand-in.
 - **Direct-launcher fallback.** If you cannot invoke the sibling skill for some
-  reason, run its bundled launcher directly: it lives next to this skill at
-  `<dirname of this SKILL.md>/../<harness>/scripts/run.mjs` (derive the absolute path
-  from this skill's announced location, the same way Grok's bundled skills reference
-  their `scripts/` helpers), and takes the same input string as the `/<harness>`
-  command.
+  reason, run its entrypoint script directly: it lives next to this skill at
+  `<dirname of this SKILL.md>/../<harness>/scripts/run.mjs` (a thin delegator; the
+  full launcher logic is now centralized in `src/launcher.mjs` but self-location
+  works via the passed `import.meta.url` from the delegator at the announced skill
+  location). Derive the absolute path from this skill's announced location, the same
+  way Grok's bundled skills reference their `scripts/` helpers, and it takes the
+  same input string as the `/<harness>` command.
 - Keep your own output focused on relaying and acting on the harness's result — the
   harness already did the orchestration.

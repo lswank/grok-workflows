@@ -19,9 +19,11 @@ only rules that would have prevented a real, specific mistake survive.
 ## How it runs
 
 This skill delegates to the bundled grok-workflows harness — do NOT re-implement
-the extraction/clustering/verification inline. It bundles a self-locating launcher
-at `<skill-dir>/scripts/run.mjs`, where `<skill-dir>` is this skill's own directory
-(its absolute path is announced in your system context). Derive the launcher path
+the extraction/clustering/verification inline. It bundles an entrypoint at
+`<skill-dir>/scripts/run.mjs` (thin delegator to the centralized launcher logic in
+`src/launcher.mjs`; self-location still works via the passed `import.meta.url`
+from the delegator), where `<skill-dir>` is this skill's own directory (its
+absolute path is announced in your system context). Derive the entrypoint path
 from that announced SKILL.md path and inline the absolute path into a single
 `run_terminal_cmd` call — don't rely on the working directory or a shell variable:
 
@@ -29,8 +31,9 @@ from that announced SKILL.md path and inline the absolute path into a single
 node <skill-dir>/scripts/run.mjs "<path to file or dir>"
 ```
 
-(The launcher locates its bundled harness itself, so no repository path is needed.
-Set `GROK_WORKFLOWS_MOCK=1` to dry-run without spending xAI credits.)
+(The launcher locates its bundled harness itself (via the delegator), so no
+repository path is needed. Set `GROK_WORKFLOWS_MOCK=1` to dry-run without spending
+xAI credits.)
 
 The harness prints a JSON object to stdout:
 
