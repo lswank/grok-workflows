@@ -406,7 +406,8 @@ test('_extractJson handles JSON inside template literals (backticks) as first sp
 
 test('_extractJson skips JSON-like in // comments when the span does not parse as valid JSON', () => {
   // { unquotedkey: inside comment produces invalid JSON span (unquoted key); skipped for later valid.
-  assert.deepEqual(_extractJson('// comment with { unquoted: [1,2] }\n{"real": true}'), { real: true })
+  // (Avoid [ ] in the bad span, as a bare [1,2] would be a valid array extracted first.)
+  assert.deepEqual(_extractJson('// comment with { unquoted: "foo bar" }\n{"real": true}'), { real: true })
 })
 
 test('_extractJson correctly handles { [ inside JSON string values (inStr/esc protection)', () => {
