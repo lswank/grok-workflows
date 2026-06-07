@@ -56,7 +56,8 @@ export const config = {
   // When true, schema'd agents are validated with the deep validator (nested
   // types, enums, array items) instead of the lightweight top-level check. Can
   // also be set per-call via opts.strictSchema. Off by default to preserve the
-  // lenient instruct-parse-retry contract.
+  // lenient instruct-parse-retry contract. See coerceBoolean() and SPEC.md
+  // pitfalls section for why the default is lenient and how to defend.
   strictSchema: process.env.GROK_WORKFLOWS_STRICT_SCHEMA === '1',
 }
 
@@ -366,7 +367,14 @@ function* _balancedSpans(s) {
 /** Minimal structural validation: required top-level keys exist. Throws on miss.
  * This is the DEFAULT, intentionally-lenient check (instruct, parse, retry). For
  * full nested/type/enum enforcement, opt into _validateDeep via opts.strictSchema
- * or config.strictSchema. */
+ * or config.strictSchema.
+ *
+ * WARNING: does NOT check "type", "enum", array "items", or nested required.
+ * LLMs commonly emit string "false"/"true", numbers as strings, wrong enum
+ * members, or omit nested objects. Workflows MUST use strict checks like
+ * v.foo === true or coerceBoolean(v.foo), or pass strictSchema:true when
+ * the contract requires exact shape. See src/SPEC.md "Schema validation
+ * pitfalls & recommended patterns" and the exported coerceBoolean helper. */
 function _validateShape(value, schema) {
   if (!schema || typeof schema !== 'object') return
   if (schema.type === 'object' && Array.isArray(schema.required)) {
@@ -379,6 +387,34 @@ function _validateShape(value, schema) {
   if (schema.type === 'array' && !Array.isArray(value)) {
     throw new Error(`expected array, got ${typeof value}`)
   }
+
+}
+
+/**
+ * Coerce common LLM/string/number/1/0 representations of booleans into a real
+ * boolean. Useful for post-processing results from agent({schema}) when you
+ * deliberately use the default lenient (top-level only) validation, or as an
+ * extra guard even with strictSchema.
+ *
+ * LLMs frequently emit the JSON string "false" (or "0", 0, "true") for a
+ * declared "type":"boolean" field because the prompt says "boolean" but the
+ * instruct+parse layer is loose by default. Use this instead of raw `v.done`
+ * or `if (v.approved)` for critical control fields.
+ *
+ * Example:
+ *   const fix = await agent(..., { schema: { type: 'object', required: ['done'], properties: { done: { type: 'boolean' } } } });
+ *   if (coerceBoolean(fix?.done) !== true) { ... flag incomplete ... }
+ *
+ * For exact enforcement + retries on bad values, prefer strictSchema:true
+ * (per-call or global) instead of or in addition to coercion.
+ */
+export function coerceBoolean(v) {
+  if (v === true || v === 'true' || v === 1 || v === '1') return true;
+  if (v === false || v === 'false' || v === 0 || v === '0') return false;
+  // Fall back conservatively: only explicit truthy representations above count
+  // as true; everything else (including "yes", null, undefined, objects, stray
+  // strings) is false for safety in control flow.
+  return false;
 }
 
 /** The JSON-ish type name of a value, distinguishing array and null from object. */
